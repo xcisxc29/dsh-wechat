@@ -2736,11 +2736,28 @@ function resolvePaths(
   config: WechatConfig,
 ): { stateFile: string; workspace: string } {
   const home = resolveHome(ctx)
-  return {
-    stateFile: config.stateFile ?? join(home, 'wechat', 'state.json'),
-    // Deliberately constant: see WORKSPACE_DIR_NAME.
-    workspace: config.workspace ?? join(home, WORKSPACE_DIR_NAME),
-  }
+  const stateFile = config.stateFile ?? join(home, 'wechat', 'state.json')
+  // Deliberately constant: see WORKSPACE_DIR_NAME.
+  const workspace = config.workspace ?? join(home, WORKSPACE_DIR_NAME)
+
+  /*
+   * The session workspace has to exist before a session can be created in it.
+   *
+   * The host resolves a session's `cwd` with `realpath`, which fails on a directory that is not
+   * there — so on a fresh install the first inbound message died with `ENOENT: no such file or
+   * directory, realpath '<home>/dsh_wechat'` and the user saw "处理这条消息时出错了".
+   *
+   * It went unnoticed because the only other place that creates it is the media writer, which uses
+   * `recursive: true` and therefore built the whole chain — but only once an attachment arrived. On
+   * a machine where that had ever happened the directory existed, and the bug hid itself. A fresh
+   * install of a released version found it immediately.
+   *
+   * Created here, where every path is resolved, so it cannot be skipped: this runs during `apply`,
+   * before any message can arrive.
+   */
+  mkdirSync(workspace, { recursive: true })
+
+  return { stateFile, workspace }
 }
 
 /** Plugin configuration from the loader patch. */

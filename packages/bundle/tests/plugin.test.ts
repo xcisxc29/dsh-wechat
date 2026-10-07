@@ -13,6 +13,7 @@
 
 import assert from 'node:assert/strict'
 import { createServer } from 'node:http'
+import { existsSync } from 'node:fs'
 import { mkdir, mkdtemp, readFile, readdir, rm, utimes, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -885,6 +886,32 @@ test('commands are answered in chat without waking a session', async () => {
     // The reply token captured from the command message must be echoed back.
     assert.equal(harness.sent[0].contextToken, 'ctx-token-1')
   })
+})
+
+/**
+ * The session workspace must exist before the host is asked to make a session in it.
+ *
+ * The host resolves a session's `cwd` with `realpath`, and that fails on a missing directory — so a
+ * fresh install answered its first inbound message with `ENOENT: no such file or directory, realpath
+ * '<home>/dsh_wechat'`. The user saw only "处理这条消息时出错了".
+ *
+ * It survived every earlier test because the only other creator was the media writer, which used
+ * `recursive: true` and so built the whole chain — but only after an attachment arrived. On any
+ * machine where that had happened once, the directory was already there.
+ */
+test('mounting creates the session workspace, so the first message can be handled', async () => {
+  const home = await mkdtemp(join(tmpdir(), 'dsh-wechat-test-'))
+  const harness = await mount({ home, seedAccount: false })
+  try {
+    assert.equal(
+      existsSync(join(home, 'dsh_wechat')),
+      true,
+      'the workspace directory must exist right after apply, before any message arrives',
+    )
+  } finally {
+    harness.dispose()
+    await removeHome(home)
+  }
 })
 
 /**
