@@ -24,6 +24,12 @@ DSH 需要工作区与工具服务（桌面端的标准组合）。
 
 侧栏点**插件**，选**添加插件**。这个输入框接受包名、Git 地址、压缩包或本地路径。
 
+> ### 要装的名字是 `dsh-wechat-plugin`
+>
+> **仓库**叫 `dsh-wechat`，但**包名不是**：请**复制 `dsh-wechat-plugin`**，别手打，注意后面那个 `-plugin`。
+>
+> npm 上另有一位作者的插件就叫 `dsh-wechat`，装那个名字得到的是别人的作品，不是这个。
+
 <details open>
 <summary><b>从 npm 装</b> —— 不需要额外配置</summary>
 
@@ -31,7 +37,7 @@ DSH 需要工作区与工具服务（桌面端的标准组合）。
 dsh-wechat-plugin
 ```
 
-需要指定版本就带上：`dsh-wechat-plugin@0.32.0`。
+需要指定版本就带上：`dsh-wechat-plugin@0.35.1`。
 </details>
 
 <details>

@@ -53,6 +53,16 @@
 | 入口声明 | bundle 自己的 `package.json` | 根 `package.json` 的 `main`/`exports`/`dsh` |
 | 额外配置 | 无 | 需在 profile 的 `pnpm-workspace.yaml` 里放行构建 |
 
+> ### 名字为什么不一致（这是有意保留的）
+>
+> **仓库叫 `dsh-wechat`，包名叫 `dsh-wechat-plugin`。**
+>
+> 原因是 npm 上 `dsh-wechat` **已经被占用**——而且是**另一位作者做的同类插件**（`pan17/dsh-wechat`）。所以要发布就只能换名，仓库名则保留短的。
+>
+> **代价是用户可能输错**：在「添加插件」里打 `dsh-wechat` 会装到别人那个。所以安装相关的文字里，**这个名字只能以可复制的形式出现**，并且必须带一句说明。
+>
+> **另一个相关约束**：包名、`cordis.patch.yml` 的行 id、`client.js` 注册的模块 id **三者必须一致**（都是 `dsh-wechat-plugin`），有测试守着。**仓库名不在这三者之内**，改仓库名不影响它们——但会打断 npm 的 Trusted Publisher（那里填的就是仓库名），所以**改名要连带重建发布配置**，这也是最终没改的原因。
+
 两条路径都要解决**同一个问题**：`@dsh-wechat/core` 是 workspace 依赖，装完之后不存在。区别只在改写目标——npm 包改到内嵌的 `dist/core/lib/index.js`，Git 安装改到同级的 `../../core/lib/index.js`。
 
 所以 import 改写做了两次，各管一条路：

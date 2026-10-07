@@ -29,6 +29,12 @@ Requires DSH with a workspace and tool service — the standard desktop composit
 Open the **plugin** entry in the sidebar and choose **添加插件** (add plugin). The field takes a package
 name, a Git URL, a tarball, or a local path.
 
+> ### The name to install is `dsh-wechat-plugin`
+>
+> The repository is called `dsh-wechat`, but the package is not: **copy `dsh-wechat-plugin` rather than
+> typing it, and mind the `-plugin`.** There is an unrelated plugin by another author published as
+> `dsh-wechat`, so installing that name gets you their work rather than this one.
+
 <details open>
 <summary><b>From npm</b> — nothing to configure</summary>
 
@@ -36,7 +42,7 @@ name, a Git URL, a tarball, or a local path.
 dsh-wechat-plugin
 ```
 
-Add a version if you need one: `dsh-wechat-plugin@0.32.0`.
+Add a version if you need one: `dsh-wechat-plugin@0.35.1`.
 </details>
 
 <details>
