@@ -165,7 +165,7 @@ pnpm install
 pnpm build              # 只编译，保留 @dsh-wechat/core 引用（pack 要靠它改写）
 pnpm run dist           # build + 内嵌 core，产出可直接加载的形态
 pnpm typecheck
-pnpm test               # 173 项
+pnpm test               # 180 项
 pnpm check              # build + typecheck + test
 pnpm run pack           # 需要先 dist
 pnpm run verify-pack    # 解包、校验清单文件、按 DSH 的方式挂载一次
