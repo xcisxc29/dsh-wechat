@@ -245,6 +245,14 @@ export interface SendMessageReq {
 
 export interface SendMessageResp {
   message_id?: string
+  /**
+   * Refusal code.
+   *
+   * The service answers a refused send with `errcode`, not `ret`, and with HTTP 200 — so a missing
+   * `errcode` here meant every failure looked like a success. `-14` is a timed-out session; see
+   * {@link STALE_TOKEN_ERRCODE}.
+   */
+  errcode?: number
   ret?: number
   errmsg?: string
 }

@@ -22,7 +22,7 @@ import { basename } from 'node:path'
 import { CDN_BASE_URL, DEFAULT_API_TIMEOUT_MS } from './constants.ts'
 import { aesEcbPaddedSize, aesKeyToBase64, aesKeyToHex, decryptAesEcb, encryptAesEcb, parseAesKey } from './crypto.ts'
 import { silkToWav } from './silk.ts'
-import { apiCall } from './http.ts'
+import { apiCall, assertSendAccepted } from './http.ts'
 import type {
   CDNMedia,
   GetUploadUrlResp,
@@ -379,6 +379,7 @@ export async function sendItem(params: {
     timeoutMs: DEFAULT_API_TIMEOUT_MS,
     ...(params.signal === undefined ? {} : { signal: params.signal }),
   })
+  assertSendAccepted(response)
   return {
     clientId,
     ...(response.message_id === undefined ? {} : { serverMessageId: response.message_id }),

@@ -16,8 +16,38 @@
 
 import { randomBytes, randomUUID } from 'node:crypto'
 
-import { APP_CLIENT_VERSION, APP_ID, CHANNEL_VERSION, DEFAULT_BOT_AGENT, DEFAULT_API_TIMEOUT_MS } from './constants.ts'
-import type { BaseInfo } from './types.ts'
+import { APP_CLIENT_VERSION, APP_ID, CHANNEL_VERSION, DEFAULT_BOT_AGENT, DEFAULT_API_TIMEOUT_MS, STALE_TOKEN_ERRCODE } from './constants.ts'
+import type { BaseInfo, SendMessageResp } from './types.ts'
+
+/**
+ * Throw when the service refused a send.
+ *
+ * Every send endpoint answers HTTP 200 whether it accepted the message or not, and reports a refusal
+ * as a non-zero `errcode` with no `message_id`. Reading only `message_id` therefore made every
+ * failure indistinguishable from success: `notify_wechat` reported "已通过微信发送" while the phone
+ * received nothing, which is the worst shape a bug can take — the user is told the opposite of what
+ * happened, and there is nothing to investigate.
+ *
+ * `errcode ?? ret` because the send endpoints use `errcode` while the polling endpoint has been seen
+ * with either; both are checked so a response shape change cannot reopen this hole.
+ *
+ * @param response - Parsed response from `ilink/bot/sendmessage`.
+ * @throws When the service refused, with the reason it gave.
+ */
+export function assertSendAccepted(response: SendMessageResp): void {
+  const errcode = response.errcode ?? response.ret
+  if (errcode === undefined || errcode === 0) return
+
+  if (errcode === STALE_TOKEN_ERRCODE) {
+    // Specifically actionable, unlike a generic failure: the conversation has gone quiet long enough
+    // that the reply context expired, and only an inbound message from the user can revive it. The
+    // agent can say so instead of retrying into the same refusal.
+    throw new Error(
+      '微信会话已超时（session timeout）。需要用户先在微信里给机器人发一条消息，之后才能主动推送。',
+    )
+  }
+  throw new Error(`发送被微信拒绝：errcode=${String(errcode)} errmsg=${response.errmsg ?? '(无)'}`)
+}
 
 /**
  * Identifiers the wire format declares as `uint64`.

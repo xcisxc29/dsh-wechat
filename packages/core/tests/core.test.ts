@@ -12,8 +12,8 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
 
-import { parseWireJson, extractRawIds, baseInfo, buildHeaders } from '../src/http.ts'
-import { conversationKey, extractText, toInbound } from '../src/channel.ts'
+import { parseWireJson, extractRawIds, baseInfo, buildHeaders, assertSendAccepted } from '../src/http.ts'
+import { conversationKey, extractText, toInbound, sendText } from '../src/channel.ts'
 import { StateStore } from '../src/state.ts'
 import {
   SessionRouter,
@@ -655,4 +655,53 @@ test('shortId stays readable and round-trips through resolveTarget', () => {
   assert.equal(resolveTarget(shortId(id), sessions)?.sessionId, id)
   // A foreign id still yields something printable rather than throwing.
   assert.equal(shortId('not-a-session-id'), 'not-a-se')
+})
+
+/*
+ * A refused send must not look like a delivered one.
+ *
+ * The service answers HTTP 200 either way, so the only signal is the code in the body — and it uses
+ * `errcode` for one refusal and `ret` for another, which is why both are checked. Before this, a
+ * refusal was reported to the user as "已通过微信发送" while the phone received nothing.
+ */
+test('a send refused with errcode throws instead of returning an id', () => {
+  assert.throws(
+    () => assertSendAccepted({ errcode: -14, errmsg: 'session timeout' }),
+    /微信会话已超时/,
+  )
+})
+
+test('a send refused with ret throws, naming the code the service gave', () => {
+  // Verified against the live service: this shape is what a dead session returns for a fully headed
+  // request, while the same refusal through a bare request comes back as `errcode`.
+  assert.throws(
+    () => assertSendAccepted({ ret: -2, errmsg: 'prepare failed' }),
+    /errcode=-2.*prepare failed/,
+  )
+})
+
+test('a send the service accepted is left alone', () => {
+  // Both the plain success and an explicit zero must pass: a strict `errmsg === undefined` check
+  // would reject a perfectly good delivery.
+  assertSendAccepted({ message_id: '1' })
+  assertSendAccepted({ message_id: '1', ret: 0 })
+  assertSendAccepted({ message_id: '1', errcode: 0, errmsg: '' })
+})
+
+test('sendText surfaces a refusal rather than reporting success', async () => {
+  const realFetch = globalThis.fetch
+  globalThis.fetch = (async () =>
+    new Response(JSON.stringify({ ret: -2, errmsg: 'prepare failed' }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    })) as typeof fetch
+
+  try {
+    await assert.rejects(
+      async () => await sendText({ account, to: 'u@im.wechat', text: 'hi' }),
+      /errcode=-2/,
+    )
+  } finally {
+    globalThis.fetch = realFetch
+  }
 })

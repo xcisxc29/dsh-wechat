@@ -539,3 +539,39 @@ test('pcmToWav handles empty input without a negative length', () => {
   assert.equal(wav.readUInt32LE(4), 36)
   assert.equal(wav.readUInt32LE(40), 0)
 })
+
+test('sendItem surfaces a refusal, so a file cannot be reported as delivered', async () => {
+  /*
+   * Every picture, video and document goes out through `sendItem`, so a refusal swallowed here means
+   * a file the user was told had been sent and never arrived. That is exactly what happened: the
+   * refusal arrives as an HTTP 200 with no `message_id`, and only the code in the body says so.
+   */
+  const { sendItem } = await import('../src/media.ts')
+  const realFetch = globalThis.fetch
+  globalThis.fetch = (async () =>
+    new Response(JSON.stringify({ errcode: -14, errmsg: 'session timeout' }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    })) as typeof fetch
+
+  try {
+    await assert.rejects(
+      async () =>
+        await sendItem({
+          account: {
+            accountId: 'a@im.bot',
+            token: 't',
+            baseUrl: 'https://example.invalid',
+            userId: 'u@im.wechat',
+            savedAt: new Date(0).toISOString(),
+          },
+          to: 'u@im.wechat',
+          item: { type: 1, text_item: { text: 'x' } },
+        }),
+      /微信会话已超时/,
+    )
+  } finally {
+    globalThis.fetch = realFetch
+  }
+})
+

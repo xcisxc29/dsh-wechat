@@ -25,7 +25,7 @@ import {
   STALE_TOKEN_ERRCODE,
 } from './constants.ts'
 import { TypingStatus } from './types.ts'
-import { apiCall, baseInfo, newClientId } from './http.ts'
+import { apiCall, assertSendAccepted, baseInfo, newClientId } from './http.ts'
 import { isMediaItem } from './media.ts'
 import type {
   GetConfigResp,
@@ -316,6 +316,9 @@ export async function sendText(params: {
     timeoutMs: DEFAULT_API_TIMEOUT_MS,
     signal: params.signal,
   })
+  // Before reading `message_id`: a refused send carries no id, so a caller that only looks for the id
+  // cannot tell "delivered without an id" from "refused".
+  assertSendAccepted(response)
   return {
     clientId,
     ...(response.message_id === undefined ? {} : { serverMessageId: response.message_id }),

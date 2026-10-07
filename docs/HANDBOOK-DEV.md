@@ -110,6 +110,45 @@ dsh-wechat/
 - **拒绝优先判定**——`不允许` 含 `允许`，子串匹配会把**拒绝当成同意**，所以先查否定词
 - **看不懂就不猜**——无法识别的回复**不当作决定**，提示重发并保持挂起。在权限上猜错等于**批准了用户没同意的事**
 
+### 3.6 最隐蔽的一次：发送失败被当成成功
+
+**这是本仓库里最坏形状的一个 bug**——它不报错，而是**告诉用户相反的事**。
+
+**发现过程**：用户说"我微信没收到"。日志显示发送成功，还有收件人、字节数、时间。但日志里有一处不对劲：
+
+```
+22:38:05  outbound: HANDBOOK-USER.md 15574B -> … id=7513608600672820360   ← 有消息 ID
+22:51:58  outbound: HANDBOOK-USER.md 15012B -> … id=(none)                ← 没有 ID
+```
+
+**`id=(none)` 就是服务端没接受**，但代码没把"没有 ID"当成失败。
+
+**根因**（两层叠加）：
+
+| # | 问题 |
+|---|---|
+| 1 | `SendMessageResp` 声明的是 `ret`，**服务端实际返回 `errcode`**——字段名对不上，读不到错误 |
+| 2 | `sendText` 和 `sendItem` **完全不检查错误字段**，只取 `message_id` |
+
+直接调 API 拿到真相：
+
+```json
+{ "errcode": -14, "errmsg": "session timeout" }
+```
+
+**而且服务端两种字段都用**：裸请求返回 `errcode: -14`，带头齐全的请求返回 `ret: -2 / prepare failed`。所以检查必须写 `errcode ?? ret`——这不是多余防御，是必需的。
+
+**修复**：`http.ts` 里加 `assertSendAccepted()`，`sendText` 与 `sendItem` 都调用；`-14` 专门给一句可操作的话（"需要你先在微信里发一条消息"）。
+
+**顺带发现的两条真实限制**（都写进了用户手册）：
+
+| 限制 | 依据 |
+|---|---|
+| **微信会话会超时** | 实测：最后一条消息后约 6 分钟推送正常，约 13 分钟后被拒。失效后**只能等用户先发消息** |
+| **非绑定会话的审批不到手机** | 代码里 `conversationId === undefined → delegate`，提示留在桌面。所以"离开电脑"必须用绑定会话，或把该会话设成完全访问 |
+
+> **教训**：**"我发出了"和"对方收到了"是两件事。** 服务用 HTTP 200 回答一个被拒绝的请求时，任何只检查状态码、只取"成功字段"的代码都在撒谎。公开的发送类接口，**必须检查拒绝字段**。
+
 ---
 
 ## 4. 发布阶段：0.32.0 → 0.34.0
@@ -315,7 +354,7 @@ npm view dsh-wechat-plugin versions --registry=https://registry.npmjs.org
 pnpm build              # 只编译，保留 @dsh-wechat/core 引用（pack 要靠它改写）
 pnpm run dist           # build + 内嵌 core：Git 安装要的可直接加载形态
 pnpm typecheck          # 含 examples/
-pnpm test               # 180 项
+pnpm test               # 185 项
 pnpm run check:install  # 两条安装路径的约束
 pnpm run pack           # 需要先 build，不能先 dist
 pnpm run verify-pack    # 解包、校验清单、按 DSH 的方式挂载一次
