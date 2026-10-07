@@ -40,7 +40,7 @@ Add a version if you need one: `dsh-wechat-plugin@0.32.0`.
 </details>
 
 <details>
-<summary><b>From GitHub</b> — the repository builds itself, with one prompt to answer</summary>
+<summary><b>From GitHub</b> — builds itself, for tracking a branch or a commit</summary>
 
 ```
 https://github.com/xcisxc29/dsh-wechat
@@ -55,10 +55,11 @@ allowBuilds:
   dsh-wechat-workspace@git+file:///…/dsh-wechat#<commit>: true
 ```
 
-Use this if you want to track a branch or pin a commit, or if npm is unreachable.
+Most people do not need this. Reach for it to pin a commit or follow a branch, or when npm is
+unreachable.
 </details>
 
-Then click **立即启用** (enable now) to turn the bundle on, and restart DSH.
+Wait for the install to finish, click **立即启用** (enable now), and restart DSH.
 
 <details>
 <summary>Install from a terminal instead</summary>

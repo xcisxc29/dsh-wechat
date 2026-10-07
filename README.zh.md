@@ -35,7 +35,7 @@ dsh-wechat-plugin
 </details>
 
 <details>
-<summary><b>从 GitHub 装</b> —— 仓库会自己构建，只有一步需要你放行</summary>
+<summary><b>从 GitHub 装</b> —— 仓库自行构建，适合跟分支或固定提交</summary>
 
 ```
 https://github.com/xcisxc29/dsh-wechat
@@ -48,10 +48,10 @@ allowBuilds:
   dsh-wechat-workspace@git+file:///…/dsh-wechat#<commit>: true
 ```
 
-想跟某个分支或固定到某个提交、或者连不上 npm 时，用这个。
+**大多数人不需要这个。** 想固定到某个提交、跟某个分支，或者连不上 npm 时再用。
 </details>
 
-装完点**立即启用**，然后重启 DSH。
+等安装完成，点**立即启用**，然后重启 DSH。
 
 <details>
 <summary>也可以从终端装</summary>
