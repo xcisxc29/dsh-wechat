@@ -1,0 +1,26 @@
+﻿# Packing rules for a Git install.
+#
+# `pnpm add git+...` clones the repository, runs `prepare`, and packs a tarball from the result. The
+# pack step applies npm rules, which consult `.gitignore` when there is no `.npmignore` - and
+# `.gitignore` excludes `lib/` and `dist/`. So `prepare` built the entry point and the pack step then
+# threw it away, and the installed plugin had no `lib/host.js` to load.
+#
+# This file keeps the tarball from being governed by `.gitignore`'s opinion about build output. It is
+# an *exclusion* list, so `lib/` is deliberately absent: what is not named here is packed.
+#
+# It does not affect `pnpm run pack`. That script stages `packages/bundle` and lets npm read that
+# package's own `files` field, which already names `lib` and `dist`.
+
+# Sources and tooling are of no use in an installed copy. `dist/` is not used on this path at all:
+# the bundle reaches core through a relative path to the sibling build.
+packages/*/src/
+packages/*/tests/
+examples/
+docs/
+
+# Local state and editor noise.
+.smoke/
+.verify/
+*-preview.html
+*.log
+.gitattributes

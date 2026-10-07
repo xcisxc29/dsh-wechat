@@ -4,61 +4,74 @@
 [![npm](https://img.shields.io/npm/v/dsh-wechat-plugin.svg)](https://www.npmjs.com/package/dsh-wechat-plugin)
 [![licence: MIT](https://img.shields.io/badge/licence-MIT-blue.svg)](LICENSE)
 
-Turn WeChat into a remote control for [DeepSeek Harness](https://github.com/deepseek-ai): chat from
-your phone, and the DSH agent on your computer does the work.
+Control DeepSeek Harness from WeChat: chat on your phone, and the DSH agent on your computer does the
+work.
 
-**No OpenClaw required.** This plugin speaks the Tencent iLink Bot API directly — the same HTTP/JSON
-interface behind WeChat's official ClawBot plugin.
+No OpenClaw, and no public IP required.
 
 [中文说明](README.zh.md)
 
----
+## Features
 
-## Why it works
-
-WeChat's ClawBot plugin **dials out** to Tencent's servers and long-polls. No public IP, no port
-forwarding, no tunnel. As long as the machine is on and the process is running, your phone works from
-any network.
-
-The protocol was read from Tencent's own channel implementation
-([`@tencent-weixin/openclaw-weixin`](https://unpkg.com/@tencent-weixin/openclaw-weixin@2.4.6/src/api/types.ts),
-MIT) and verified against the live service:
-
-| Check | Result |
-|---|---|
-| Does the server require OpenClaw? | No — it does not check client identity |
-| QR login | Issues a real `ilink_bot_id` (`xxx@im.bot`) |
-| Bearer auth | Works |
-| Long-poll inbound | Real messages, all fields present |
-| Send text | Arrives on the phone |
-| Proactive message without `context_token` | Accepted by the server |
-| Reuse the token across restarts | Works — no rescan after a reboot |
-
----
-
-## What it does
-
-| | |
-|---|---|
-| **Text both ways** | Your message becomes a DSH prompt; the reply comes back to WeChat |
-| **Photos, files, voice, video** | Downloaded, decrypted, saved into the session workspace, and handed to the agent. Outbound too, through a `send_to_wechat` tool the agent can call |
-| **One WeChat chat, many DSH sessions** | `/new`, `/list`, `/switch`, `/current`, `/cancel` — or just say "switch to the other one" in plain language |
-| **Answer prompts from your phone** | Permission requests and multiple-choice questions are sent to WeChat and answered with a number. Without this, anyone away from the desk is stuck forever, because the default answerer fails closed |
-| **Settings page** | In DSH under **Settings → WeChat**, styled with DSH's own design tokens |
-
----
+- **Text both ways.** Your WeChat message becomes a DSH prompt; the reply comes back to WeChat.
+- **Photos, files, voice, video** — both directions. Attachments are saved into the session workspace
+  and handed to the agent; the agent can send files back with `send_to_wechat`.
+- **One WeChat chat, many DSH sessions.** `/new`, `/list`, `/switch`, `/current`, `/cancel` — or just
+  say "switch to the other one".
+- **Answer permission prompts from your phone.** Approvals and multiple-choice questions are sent to
+  WeChat and answered with a number, so being away from the desk does not stall the agent.
+- **Settings page** under **Settings → WeChat**.
 
 ## Install
 
 Requires DSH with a workspace and tool service — the standard desktop composition.
 
-DSH ships a launcher for exactly this, and it is a thin wrapper over pnpm:
+Open the **plugin** entry in the sidebar and choose **添加插件** (add plugin). The field takes a package
+name, a Git URL, a tarball, or a local path.
+
+<details open>
+<summary><b>From npm</b> — nothing to configure</summary>
+
+```
+dsh-wechat-plugin
+```
+
+Add a version if you need one: `dsh-wechat-plugin@0.32.0`.
+</details>
+
+<details>
+<summary><b>From GitHub</b> — the repository builds itself, with one prompt to answer</summary>
+
+```
+https://github.com/xcisxc29/dsh-wechat
+```
+
+DSH clones the repository and builds it. **pnpm will stop the build once and ask you to allow it** —
+that is expected, and it is how any Git-hosted plugin builds. DSH reports which key to add; it looks
+like this, in `~/.dsh/profiles/desktop/pnpm-workspace.yaml`:
+
+```yaml
+allowBuilds:
+  dsh-wechat-workspace@git+file:///…/dsh-wechat#<commit>: true
+```
+
+Use this if you want to track a branch or pin a commit, or if npm is unreachable.
+</details>
+
+Then click **立即启用** (enable now) to turn the bundle on, and restart DSH.
+
+<details>
+<summary>Install from a terminal instead</summary>
+
+The app drives `pnpm` underneath, so the same thing headlessly:
 
 ```bash
 dsh plugin --profile desktop add dsh-wechat-plugin
+dsh plugin --profile desktop add https://github.com/xcisxc29/dsh-wechat
 ```
 
-Then add it to the profile's bundles, in `~/.dsh/profiles/desktop/package.json`:
+You then have to enable the bundle yourself — which is what **立即启用** does for you — in
+`~/.dsh/profiles/desktop/package.json`:
 
 ```json
 {
@@ -73,157 +86,106 @@ Then add it to the profile's bundles, in `~/.dsh/profiles/desktop/package.json`:
   }
 }
 ```
+</details>
 
-**Restart DSH.** Then open **Settings → WeChat**, click **重新扫码** (rescan), and scan the QR code
-with your phone. Send `你好` from WeChat and you should get a reply.
-
-> **This deployment has no plugin marketplace.** DSH's plugin settings page lists the plugins a
-> deployment ships and nothing else — there is no install button. `dsh plugin` is the only built-in
-> way in, which is why the steps above edit `package.json` by hand.
-
-### From source
+<details>
+<summary>Install from a locally built tarball</summary>
 
 ```bash
-pnpm install && pnpm build && pnpm run pack
+pnpm install && pnpm run dist && pnpm run pack
 # → dsh-wechat-plugin-<version>.tgz
-
-dsh plugin --profile desktop add /absolute/path/to/dsh-wechat-plugin-<version>.tgz
 ```
 
-### Optional
+Paste the absolute path to that `.tgz` into **添加插件**, or hand it to the command line:
 
-Voice messages arrive as WeChat's SILK format. To transcribe them to WAV locally, install the codec
-into the profile:
+```bash
+dsh plugin --profile desktop add /absolute/path/to/dsh-wechat-plugin-<version>.tgz
+```
+</details>
+
+### Getting started
+
+After restarting DSH, open **Settings → WeChat**, click **重新扫码** (rescan), and scan the QR code with
+your phone. Send `你好` from WeChat and you should get a reply.
+
+### Optional: voice to text
+
+WeChat voice notes are SILK. Install this codec to transcribe them to WAV locally:
 
 ```bash
 dsh plugin --profile desktop add silk-wasm
 ```
 
-Without it, voice still works: the raw SILK file is saved and handed to the agent along with the
-service's own transcription. Image thumbnails use `sharp`, which ships with the application; if it is
-absent, images are sent without one.
+Without it voice still works: the raw SILK file is saved and handed to the agent along with the
+service's own transcription.
 
-Set `DSH_WECHAT_NO_CODECS=1` to force both codecs off — useful for checking what a stripped
-deployment will do.
+## Usage
 
----
-
-## Use
+Just send a message and it reaches the agent:
 
 ```
-你好                          → starts a conversation
-/new 修复登录                  → a new conversation, titled
-/list                         → what conversations exist
-/list all                     → including other workspaces
-/switch 3                     → move to number 3
-/current                      → where am I
-/cancel                       → stop the current task
-/help                         → the list above
+你好
 ```
 
-Spaces are optional: `/switch3`, `/switch 3` and `/switch:3` all work, because phone keyboards drop
-spaces. A bare `/news` is left alone — a command name followed by an ASCII letter is not split.
+Type these to control which DSH conversation you are talking to:
 
-**You do not have to remember any of this.** Plain language works: "switch to the other one", "what
-conversations do I have", "stop". The agent judges the intent and calls a tool; `/list` and the spoken
-path render the same list from the same code, so the same question gives the same answer.
+| Command | What it does |
+|---|---|
+| `/new` | Start a fresh conversation. Anything after it becomes the title: `/new 修复登录` starts a conversation called 「修复登录」. Without one, the conversation gets a name from your first message |
+| `/list` | Conversations in the WeChat workspace, newest first |
+| `/list all` | Every conversation, including other workspaces |
+| `/switch 3` | Move to number 3 in that list |
+| `/current` | Which conversation you are in |
+| `/cancel` | Stop the task that is running |
+| `/help` | This list |
 
-**Conversation titles come from your first message.** DSH names a session from its first prompt, so
-the channel sends that first message with *only* your words — the standing channel note goes as a
-separate message immediately after. Otherwise every conversation would be named after the note.
+**Spaces are optional**: `/switch3`, `/switch 3` and `/switch:3` all work.
 
-See [SETTINGS.md](SETTINGS.md) for every setting, in Chinese.
+**Plain language works too** — "switch to the other one", "what conversations do I have", "stop". The
+agent judges the intent rather than matching fixed rules, and a switch tells you whether it succeeded
+or failed.
 
----
-
-## Security — read this
+## Read this before you start
 
 **Anyone who can message this bot can drive the computer it runs on.** The agent can execute commands
-and read and write files, and messages from WeChat are the only credential involved.
+and read and write files, and the only credential involved is the WeChat message itself.
 
-That means: the bot's WeChat account, and the friend list that can reach it, are the security
-boundary. There is no allowlist in this version. If that is not a boundary you want, do not run it, or
-run it where a stranger with your WeChat account would not matter.
+So **the bot's WeChat account, and who can reach it, are the security boundary**. There is no
+allowlist in this version. If that is not a boundary you want, do not install it.
 
-Related, and deliberate: **there is no password on the settings page.** One was built and then
-removed as over-complicated. It also protects less than it appears to — it cannot stop anyone who can
-send the bot a WeChat message, which is the actual threat.
+Put another way: **being able to message your bot is the same as being able to operate your computer.**
 
----
+## Documentation
 
-## How it works
-
-```
-phone WeChat ──► Tencent iLink ──► your machine
-                                     │
-                               dsh-wechat-plugin
-                                     │
-                   ┌─────────────────┴─────────────────┐
-                   │  @dsh-wechat/core                 │  protocol, zero DSH dependencies
-                   │  login / long-poll / send / state │
-                   └─────────────────┬─────────────────┘
-                                     │
-                   ┌─────────────────┴─────────────────┐
-                   │  dsh-wechat-plugin (bundle)       │  host glue
-                   │  routing / settings / replies     │
-                   └───────────────────────────────────┘
-```
-
-Two halves. `@dsh-wechat/core` is a plain client for the iLink API and knows nothing about DSH, so it
-is testable and reusable on its own. The bundle wires it to DSH: session routing, the settings page,
-media, and the return path for replies.
-
-### Examples
-
-Both run from the repository root after `pnpm build`, and use `@dsh-wechat/core` directly — no DSH, no
-agent.
-
-```bash
-# The whole protocol in about forty lines: log in, echo every message back.
-node --experimental-transform-types examples/echo-bot.ts
-
-# Send a file to a WeChat user *without* being asked — no `context_token` needed.
-node --experimental-transform-types examples/send-file.ts ./report.md
-```
-
-`echo-bot` prints the QR login URL and then echoes whatever you send it. `send-file` reuses the
-credentials already in `$DSH_HOME/wechat/state.json` rather than logging in again, because a second
-client scanning would rebind the bot and unbind the phone.
-
-The examples are type-checked with the rest of the repository (`pnpm typecheck`), which is not
-decoration: the first version of `send-file` passed a file path to `sendFile`, whose real signature
-wants an uploaded CDN reference. Only the compiler caught it.
-
-| Document | Contents |
+| | |
 |---|---|
-| [README.zh.md](README.zh.md) | Full notes, protocol evidence, progress (Chinese) |
-| [SETTINGS.md](SETTINGS.md) | Every setting explained (Chinese) |
-| [docs/POSTMORTEM.md](docs/POSTMORTEM.md) | Every real failure met while building this, and its cause |
+| [SETTINGS.md](SETTINGS.md) | What each setting actually does (Chinese) |
+| [docs/INTERNALS.md](docs/INTERNALS.md) | Protocol references, architecture, the two packages (Chinese) |
+| [docs/PROGRESS.md](docs/PROGRESS.md) | Feature status and how each was verified (Chinese) |
+| [docs/POSTMORTEM.md](docs/POSTMORTEM.md) | Every real failure met while building this (Chinese) |
 | [docs/RELEASING.md](docs/RELEASING.md) | How a version gets published (Chinese) |
-| [examples/](examples) | A working echo bot and a proactive file send, on `core` alone |
-
----
+| [examples/](examples) | Complete `core`-only examples: an echo bot, and sending a file |
 
 ## Development
 
 ```bash
 pnpm install
-pnpm build        # compiles core to lib/ — the bundle imports the built form
-pnpm typecheck    # includes examples/
-pnpm test         # 173 tests
-pnpm check        # build + typecheck + test
-pnpm run pack     # not `pnpm pack`: that is pnpm's own command and fails here
-pnpm run verify-pack  # extract, check the manifest's files exist, and mount it as DSH would
+pnpm build              # compiles only, leaving @dsh-wechat/core imports for pack to rewrite
+pnpm run dist           # build + inline core: the loadable form a Git install needs
+pnpm typecheck
+pnpm test               # 173 tests
+pnpm check              # build + typecheck + test
+pnpm run pack           # run dist first
+pnpm run verify-pack    # unpack, check the manifest's files, mount it as DSH would
 ```
+
+Two build outputs, on purpose. `build` is the compiling step alone, and it keeps
+`@dsh-wechat/core` as a package import so `pack` can redirect it into the vendored `dist/core`.
+`dist` runs that compile and then rewrites the import to a relative path instead, which is what a Git
+install ends up with — it clones the repository and runs `prepare`, never `pack`.
 
 **Rebuild `core` after changing it.** Tests resolve `@dsh-wechat/core` through `node_modules` to
 `lib/`, so source edits without a rebuild test the *old* code — and pass.
-
-`scripts/` holds the long-lived tools: `pack`, `verify-pack`, `smoke`, `probe-silk`,
-`probe-installed`, `preview`, `asar-extract`. One-off debugging probes were deleted once their
-findings became regression tests.
-
----
 
 ## Licence
 

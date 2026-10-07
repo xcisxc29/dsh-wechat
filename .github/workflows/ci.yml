@@ -48,6 +48,11 @@ jobs:
 
       - run: pnpm typecheck
 
+      # Before packing, because it asserts the invariants packing depends on: that `build` left the
+      # `@dsh-wechat/core` import for `pack.mjs` to rewrite, and that the root manifest and
+      # `.npmignore` still make a Git install resolvable.
+      - run: pnpm run check:install
+
       - run: pnpm test
 
       # Packing and then mounting the result is what catches a package that installs cleanly and
