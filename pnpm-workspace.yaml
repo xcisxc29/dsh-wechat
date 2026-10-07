@@ -1,2 +1,24 @@
 packages:
   - packages/*
+
+# pnpm 10 and later read project settings from this file, not from `.npmrc`. The `.npmrc` here had
+# `node-linker=hoisted` and `confirm-modules-purge=false` for a long time and neither was in effect
+# any more: `pnpm config get node-linker` reports `undefined`, and the hoisted layout survived only
+# because a previous install had recorded it in `node_modules/.modules.yaml`. That is why a workspace
+# which had built all day suddenly started aborting with
+# ERR_PNPM_ABORTED_REMOVE_MODULES_DIR_NO_TTY: pnpm decided the modules directory was stale, tried to
+# purge it, could not ask for confirmation without a terminal, and gave up — leaving `node_modules`
+# with three entries instead of several hundred.
+#
+# `nodeLinker: hoisted` is load-bearing, not cosmetic. The isolated layout gives a package its
+# dependencies as siblings under `.pnpm/<pkg>@<version>/node_modules/`, resolvable only by walking up
+# from the requiring file, which breaks `qrcode`'s `dijkstrajs`/`pngjs` imports — as
+# `Cannot find module 'dijkstrajs'` at runtime, and only once packed and installed.
+nodeLinker: hoisted
+
+# Stops pnpm from checking dependencies before running a script, which is the check that decides the
+# directory is stale in the first place. `confirmModulesPurge` answers the prompt if a check happens
+# anyway. Both, because either one alone leaves a way for a plain `pnpm test` to turn into an install
+# prompt that no automation can answer.
+verifyDepsBeforeRun: false
+confirmModulesPurge: false
