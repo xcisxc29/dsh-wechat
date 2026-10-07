@@ -167,6 +167,8 @@ without being asked.**
 
 | | |
 |---|---|
+| [docs/HANDBOOK-USER.md](docs/HANDBOOK-USER.md) | User guide, from installing to troubleshooting (Chinese) |
+| [docs/HANDBOOK-DEV.md](docs/HANDBOOK-DEV.md) | Development handbook: what went wrong, how to release (Chinese) |
 | [SETTINGS.md](SETTINGS.md) | What each setting actually does (Chinese) |
 | [docs/INTERNALS.md](docs/INTERNALS.md) | Protocol references, architecture, the two packages (Chinese) |
 | [docs/PROGRESS.md](docs/PROGRESS.md) | Feature status and how each was verified (Chinese) |

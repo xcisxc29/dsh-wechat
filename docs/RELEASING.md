@@ -1,6 +1,6 @@
 # 发布流程
 
-面向维护者。用户安装看 [README](README.md)。
+面向维护者。用户安装看 [README](../README.md)。
 
 ## 一次版本发布
 

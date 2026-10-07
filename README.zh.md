@@ -147,6 +147,8 @@ dsh plugin --profile desktop add silk-wasm
 
 | | |
 |---|---|
+| [docs/HANDBOOK-USER.md](docs/HANDBOOK-USER.md) | **使用手册**：从安装到排错，不需要技术背景 |
+| [docs/HANDBOOK-DEV.md](docs/HANDBOOK-DEV.md) | **开发手册**：开发历程、版本迭代、怎么继续改 |
 | [SETTINGS.md](SETTINGS.md) | 每条设置的实际作用 |
 | [docs/INTERNALS.md](docs/INTERNALS.md) | 协议依据、架构、两个包的区别 |
 | [docs/PROGRESS.md](docs/PROGRESS.md) | 各档功能的完成情况与验证方式 |
