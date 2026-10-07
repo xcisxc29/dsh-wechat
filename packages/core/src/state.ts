@@ -18,6 +18,7 @@
  * @module @dsh-wechat/core/state
  */
 
+import { randomUUID } from 'node:crypto'
 import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 
@@ -49,6 +50,17 @@ export interface ChannelState {
    * Bounded per conversation, since only a recent message is ever quoted.
    */
   sentMessages: Record<string, Record<string, SentMessage[]>>
+  /**
+   * Proactive messages the service refused, waiting for the reply window to reopen.
+   *
+   * The window that allows a send is opened by an inbound message, so a push that arrives too late is
+   * refused — and until this queue existed it was simply lost, silently: several permission prompts
+   * and result summaries never reached the phone while the log said they had been sent.
+   *
+   * Kept in the state file rather than in memory so a restart does not discard them, and bounded by
+   * both count and age so a long silence cannot grow the file without limit.
+   */
+  pendingNotifications?: PendingNotification[]
   /** Whether the channel should reconnect on boot. */
   autoStart?: boolean
   /**
@@ -180,6 +192,92 @@ export interface SentMessage {
 
 /** How many sent messages to retain per conversation. */
 export const SENT_MESSAGE_HISTORY = 40
+
+/**
+ * A proactive message that could not be delivered, kept for the next open window.
+ *
+ * Deliberately holds the file's *path*, not its bytes: the queue is written to the state file on
+ * every change, and embedding attachments would turn a small JSON document into something that grows
+ * with every missed screenshot. The cost is that a file deleted between queueing and delivery cannot
+ * be sent, which is reported rather than retried forever.
+ */
+export interface PendingNotification {
+  /**
+   * Identity, so a delivered entry can be removed exactly.
+   *
+   * Matching on its fields instead would remove both copies of two identical messages queued in the
+   * same millisecond, which is the one case where a duplicate is worth keeping.
+   */
+  id: string
+  /** Conversation it was meant for. Only a message from this one reopens the window. */
+  conversationId: string
+  /** Text to send. May be empty when only a file was owed. */
+  text: string
+  /** Absolute path of the file to send after the text, when there was one. */
+  path?: string
+  /** When it was queued, for the age bound and for saying how late it is. */
+  queuedAt: number
+}
+
+/** How many undelivered notifications to keep. */
+export const PENDING_NOTIFICATION_LIMIT = 20
+
+/** How long an undelivered notification stays worth sending. */
+export const PENDING_NOTIFICATION_MAX_AGE_MS = 24 * 60 * 60 * 1000
+
+/**
+ * Add one undelivered notification, dropping the oldest when the queue is full.
+ *
+ * Oldest-first because the queue is a backlog the user will read in order: when it overflows, the
+ * least relevant entry is the one at the front, not the one just added.
+ *
+ * @param state - State to mutate.
+ * @param entry - The notification to keep; `id` and `queuedAt` are filled in.
+ * @param now - Current time, injected so tests need no clock.
+ * @param limit - How many entries to keep.
+ * @returns How many entries were dropped to make room.
+ */
+export function queuePendingNotification(
+  state: ChannelState,
+  entry: Omit<PendingNotification, 'id' | 'queuedAt'> & { id?: string; queuedAt?: number },
+  now: number = Date.now(),
+  limit: number = PENDING_NOTIFICATION_LIMIT,
+): number {
+  const queue = (state.pendingNotifications ??= [])
+  queue.push({ ...entry, id: entry.id ?? randomUUID(), queuedAt: entry.queuedAt ?? now })
+  let dropped = 0
+  // `limit >= 0` mirrors the sent-message helper: a limit of 0 means "keep nothing", not "no bound".
+  while (limit >= 0 && queue.length > limit) {
+    queue.shift()
+    dropped += 1
+  }
+  return dropped
+}
+
+/**
+ * Drop notifications too old to be worth sending.
+ *
+ * Without this a channel left running for a month would deliver month-old messages the first time
+ * the user said hello, which reads as a malfunction rather than a backlog.
+ *
+ * @param state - State to mutate.
+ * @param now - Current time, injected so tests need no clock.
+ * @param maxAgeMs - How long an entry stays valid.
+ * @returns The entries that were dropped, oldest first.
+ */
+export function expirePendingNotifications(
+  state: ChannelState,
+  now: number = Date.now(),
+  maxAgeMs: number = PENDING_NOTIFICATION_MAX_AGE_MS,
+): PendingNotification[] {
+  const queue = state.pendingNotifications
+  if (queue === undefined || queue.length === 0) return []
+  const expired = queue.filter((entry) => now - entry.queuedAt > maxAgeMs)
+  if (expired.length > 0) {
+    state.pendingNotifications = queue.filter((entry) => now - entry.queuedAt <= maxAgeMs)
+  }
+  return expired
+}
 
 const EMPTY_STATE: ChannelState = {
   version: 1,
@@ -335,9 +433,33 @@ function normalize(parsed: Partial<ChannelState>): ChannelState {
     sentMessages: isRecord(parsed.sentMessages)
       ? (parsed.sentMessages as Record<string, Record<string, SentMessage[]>>)
       : {},
+    /*
+     * Filtered rather than trusted. This array is read back and sent to the user, so an entry with a
+     * missing conversation or a non-string text would reach the send path as `undefined`.
+     */
+    ...(Array.isArray(parsed.pendingNotifications)
+      ? { pendingNotifications: parsed.pendingNotifications.filter(isPendingNotification) }
+      : {}),
     ...(isRecord(parsed.settings) ? { settings: normalizeSettings(parsed.settings) } : {}),
     ...(typeof parsed.autoStart === 'boolean' ? { autoStart: parsed.autoStart } : {}),
   }
+}
+
+/**
+ * Whether a stored entry is a usable pending notification.
+ *
+ * @param raw - One entry from the state file.
+ * @returns True when every required field is present and of the right type.
+ */
+function isPendingNotification(raw: unknown): raw is PendingNotification {
+  if (!isRecord(raw)) return false
+  return (
+    typeof raw.id === 'string' &&
+    typeof raw.conversationId === 'string' &&
+    typeof raw.text === 'string' &&
+    typeof raw.queuedAt === 'number' &&
+    (raw.path === undefined || typeof raw.path === 'string')
+  )
 }
 
 /**

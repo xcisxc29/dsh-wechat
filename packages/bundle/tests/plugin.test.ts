@@ -21,7 +21,7 @@ import { test } from 'node:test'
 
 import { apply, recordClientFailure, type SendFunction } from '../src/host.ts'
 import type { WechatContext } from '../src/services.ts'
-import { DEFAULT_SETTINGS, aesKeyToBase64, encodeWorkspaceDir, isSameWorkspace, shortId } from '@dsh-wechat/core'
+import { DEFAULT_SETTINGS, SendRefusedError, aesKeyToBase64, encodeWorkspaceDir, isSameWorkspace, shortId } from '@dsh-wechat/core'
 
 /**
  * Note on the core import: `host.ts` imports `@dsh-wechat/core`, which resolves
@@ -2235,10 +2235,12 @@ function notifyTool(harness: Harness): {
  *
  * @param home - DSH home to write into.
  * @param settings - Extra settings to store alongside the defaults.
+ * @param pending - Notifications to seed the unsent queue with.
  */
 async function seedBoundConversation(
   home: string,
   settings: Record<string, unknown> = {},
+  pending: unknown[] = [],
 ): Promise<void> {
   await mkdir(join(home, 'wechat'), { recursive: true })
   await writeFile(
@@ -2268,6 +2270,7 @@ async function seedBoundConversation(
           },
         },
         sentMessages: {},
+        ...(pending.length > 0 ? { pendingNotifications: pending } : {}),
         settings: { ...DEFAULT_SETTINGS, ...settings },
       },
       null,
@@ -2352,6 +2355,166 @@ test('a proactive send with no bound conversation says so instead of failing sil
       /还没有微信对话/,
     )
   })
+})
+
+/** Read the persisted pending queue. */
+async function pendingQueue(harness: Harness): Promise<{ id: string; text: string; path?: string; queuedAt: number }[]> {
+  const state = JSON.parse(await readFile(harness.stateFile, 'utf8'))
+  return state.pendingNotifications ?? []
+}
+
+test('a refused push is queued, and the agent is told it will be delivered later', async () => {
+  /*
+   * The behaviour this exists for. A push that arrives after the reply window closed used to be lost
+   * while the log said it had been sent — several permission prompts and result summaries never
+   * reached the phone. Nothing can reopen the window from this side, but the message can wait for the
+   * user to reopen it by sending something, which is what the queue does.
+   */
+  const home = await mkdtemp(join(tmpdir(), 'dsh-wechat-test-'))
+  try {
+    await seedBoundConversation(home)
+    const refuse: SendFunction = async () => {
+      throw new SendRefusedError('微信会话已超时（session timeout）。', -14)
+    }
+    const harness = await mountWith({ home, seedAccount: false, send: refuse })
+    try {
+      const result = await notifyTool(harness).execute(
+        { text: '构建完成了' },
+        { agent: { session: { id: 'session-somewhere-else' } } },
+      )
+
+      // Reported as queued, not as sent: the old failure mode was a report that read like success.
+      assert.match(result.detail, /已排队/)
+      assert.doesNotMatch(result.detail, /^已通过微信发送/)
+
+      const queue = await pendingQueue(harness)
+      assert.equal(queue.length, 1)
+      assert.equal(queue[0].text, '构建完成了')
+      assert.ok(queue[0].id, 'an id is needed to remove exactly this entry later')
+    } finally {
+      harness.dispose()
+    }
+  } finally {
+    await removeHome(home)
+  }
+})
+
+test('a push that fails for any other reason still throws and is not queued', async () => {
+  // A missing file or a dead network will fail again the same way, so turning it into a backlog would
+  // hide the error behind a delay instead of reporting it.
+  const home = await mkdtemp(join(tmpdir(), 'dsh-wechat-test-'))
+  try {
+    await seedBoundConversation(home)
+    const fail: SendFunction = async () => {
+      throw new Error('网络断了')
+    }
+    const harness = await mountWith({ home, seedAccount: false, send: fail })
+    try {
+      await assert.rejects(
+        async () =>
+          await notifyTool(harness).execute(
+            { text: '这条不该排队' },
+            { agent: { session: { id: 'session-somewhere-else' } } },
+          ),
+        /网络断了/,
+      )
+      assert.deepEqual(await pendingQueue(harness), [], 'nothing is queued for a failure that will repeat')
+    } finally {
+      harness.dispose()
+    }
+  } finally {
+    await removeHome(home)
+  }
+})
+
+test('the next inbound message delivers what the closed window held back', async () => {
+  /*
+   * The whole cycle, driven the way it happens: the push is refused because the window is closed, the
+   * user says something, and what was held goes out — before their own message is handled, so it
+   * reads as a backlog rather than as answers to the question they just asked.
+   */
+  const home = await mkdtemp(join(tmpdir(), 'dsh-wechat-test-'))
+  try {
+    await seedBoundConversation(home)
+    const delivered: string[] = []
+    /** How many agent turns had started when each delivery happened. */
+    const promptsWhenDelivered: number[] = []
+    let refuse = true
+    let harness: Harness | undefined
+    const send: SendFunction = async (params) => {
+      if (refuse) throw new SendRefusedError('微信会话已超时（session timeout）。', -14)
+      delivered.push(params.text)
+      promptsWhenDelivered.push(harness?.prompted.length ?? -1)
+      return { clientId: `t-${String(delivered.length)}`, serverMessageId: `m-${String(delivered.length)}` }
+    }
+
+    harness = await mountWith({ home, seedAccount: false, send })
+    try {
+      await notifyTool(harness).execute(
+        { text: '构建完成了' },
+        { agent: { session: { id: 'session-somewhere-else' } } },
+      )
+      assert.equal((await pendingQueue(harness)).length, 1, 'refused, so it waits')
+
+      // The user comes back, which is the only thing that reopens the window.
+      refuse = false
+      await harness.runtime.ingest(inbound('在吗'))
+
+      assert.ok(
+        delivered.includes('构建完成了'),
+        `the held message goes out, got: ${JSON.stringify(delivered)}`,
+      )
+      assert.equal(
+        promptsWhenDelivered[0],
+        0,
+        'the backlog is delivered before the agent starts on the new message',
+      )
+      assert.deepEqual(await pendingQueue(harness), [], 'and the queue is emptied')
+    } finally {
+      harness.dispose()
+    }
+  } finally {
+    await removeHome(home)
+  }
+})
+
+test('a queued file that no longer exists is dropped and the user is told', async () => {
+  /*
+   * The queue keeps a path, not the bytes, so a file can be deleted between queueing and delivery.
+   * Retrying it forever would block everything behind it, and dropping it silently would leave the
+   * user waiting for an attachment they were promised — so it is dropped and named.
+   */
+  const home = await mkdtemp(join(tmpdir(), 'dsh-wechat-test-'))
+  try {
+    const gone = join(home, '已经不在了.docx')
+    await seedBoundConversation(home, {}, [
+      {
+        id: 'held-file',
+        conversationId: 'test@im.bot:peer@im.wechat',
+        text: '报告好了',
+        path: gone,
+        queuedAt: Date.now(),
+      },
+    ])
+    const harness = await mountWith({ home, seedAccount: false })
+    try {
+      assert.ok(!existsSync(gone), 'the file must really be missing for this to mean anything')
+
+      await harness.runtime.ingest(inbound('在吗'))
+
+      const texts = harness.sent.map((entry) => entry.text)
+      assert.ok(texts.includes('报告好了'), `the text still goes out, got: ${JSON.stringify(texts)}`)
+      assert.ok(
+        texts.some((text) => text.includes('已经不在了.docx')),
+        `the user is told which file is gone, got: ${JSON.stringify(texts)}`,
+      )
+      assert.deepEqual(await pendingQueue(harness), [], 'and the entry is dropped rather than retried')
+    } finally {
+      harness.dispose()
+    }
+  } finally {
+    await removeHome(home)
+  }
 })
 
 test('the permission preset is stored and reported, defaulting to full access', async () => {

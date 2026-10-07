@@ -9,7 +9,7 @@
  */
 
 import { randomUUID } from 'node:crypto'
-import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { readFile, writeFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { basename, join } from 'node:path'
@@ -35,6 +35,9 @@ import {
   renderSessionRow,
   toDataUrl,
   uploadMedia,
+  SendRefusedError,
+  queuePendingNotification,
+  expirePendingNotifications,
   type BindingStore,
   type CDNMedia,
   type ChannelSettings,
@@ -1253,6 +1256,13 @@ class WechatRuntime {
       })
     }
 
+    /*
+     * A message from the user is the only thing that reopens the reply window, so anything queued
+     * while it was closed goes out now — before this message is handled, so the backlog reads as a
+     * backlog rather than as answers to the question they just asked.
+     */
+    await this.#flushPending(message.conversationId)
+
     const account = await this.#account(message.accountId)
     if (account === undefined) return
     const monitor = this.#monitors.get(message.accountId)?.monitor
@@ -1815,6 +1825,10 @@ class WechatRuntime {
   /**
    * Send the text and then the file, into one already-resolved conversation.
    *
+   * Each piece is attempted separately and a refusal queues only the piece that was refused, so a
+   * message that arrives before the window closes is not sent twice when the file behind it is held
+   * back for later.
+   *
    * @param target - Conversation to deliver to.
    * @param text - Message to send; skipped when empty.
    * @param path - File to send; skipped unless it is a string.
@@ -1827,27 +1841,238 @@ class WechatRuntime {
     path: unknown,
     signal?: AbortSignal,
   ): Promise<string> {
-    const did: string[] = []
-    if (text.trim() !== '') {
-      await this.#sendText(
-        target.account,
-        target.conversationId,
-        target.peerId,
-        text,
-        target.contextToken,
+    const file = typeof path === 'string' && path !== '' ? path : undefined
+    if (text.trim() === '' && file === undefined) throw new Error('没有可发送的内容。')
+
+    /*
+     * Queued as one entry rather than two, because the text is usually the caption for the file: sent
+     * separately later, the file would arrive with no explanation. Whatever went out before the
+     * refusal is dropped from the entry so it is not repeated.
+     */
+    let outstandingText = text.trim() === '' ? '' : text
+    let outstandingPath = file
+    const done: string[] = []
+
+    if (outstandingText !== '') {
+      if (await this.#sendOrQueue(target, outstandingText, undefined, signal)) {
+        done.push('消息')
+        outstandingText = ''
+      }
+    }
+    if (outstandingPath !== undefined) {
+      if (await this.#sendOrQueue(target, '', outstandingPath, signal)) {
+        done.push(`文件 ${basename(outstandingPath)}`)
+        outstandingPath = undefined
+      }
+    }
+    if (outstandingText === '' && outstandingPath === undefined) {
+      const summary = `已通过微信发送：${done.join('、')}`
+      // Recorded because a proactive send has no other trace: nothing in the transcript shows it, and
+      // "did it actually reach the phone" is the only question that matters when it is reported.
+      this.#recordBoot(`notify_wechat: ${done.join(', ')} to ${target.conversationId}`)
+      return summary
+    }
+
+    // The window is closed. Kept for the next message the user sends, which reopens it.
+    const held = outstandingPath === undefined ? '这条消息' : `文件 ${basename(outstandingPath)}`
+    this.#recordBoot(
+      `notify_wechat: 窗口已关闭，${held} 已排队（会话 ${target.conversationId}）` +
+        (done.length > 0 ? `；已先送出 ${done.join('、')}` : ''),
+    )
+    return (
+      `${held}没能立刻发出：微信的回信窗口已关闭。已排队，` +
+      `会在用户下次在微信里发消息时自动补发。` +
+      (done.length > 0 ? `（已先送出：${done.join('、')}）` : '')
+    )
+  }
+
+  /**
+   * Send one piece, or keep it for the next open window.
+   *
+   * Only a refusal by the service is treated this way. A missing file, a network failure or a
+   * cancelled run all throw as before: those will fail again the same way, and turning them into a
+   * backlog would only hide the error behind a delay.
+   *
+   * @param target - Conversation to deliver to.
+   * @param text - Text to send; empty when only a file is being sent.
+   * @param path - File to send; undefined when only text is being sent.
+   * @param signal - Cancellation from the caller, when there is one.
+   * @returns True when it was sent now, false when it was queued.
+   */
+  async #sendOrQueue(
+    target: { account: WeixinAccount; peerId: string; conversationId: string; contextToken?: string },
+    text: string,
+    path: string | undefined,
+    signal?: AbortSignal,
+  ): Promise<boolean> {
+    try {
+      if (path !== undefined) await this.#conveyFile(path, undefined, target, signal)
+      else {
+        await this.#sendText(
+          target.account,
+          target.conversationId,
+          target.peerId,
+          text,
+          target.contextToken,
+        )
+      }
+      return true
+    } catch (error) {
+      if (!(error instanceof SendRefusedError)) throw error
+      await this.#store.update((state) => {
+        const dropped = queuePendingNotification(state, {
+          conversationId: target.conversationId,
+          text,
+          ...(path === undefined ? {} : { path }),
+        })
+        if (dropped > 0) {
+          this.#recordBoot(`notify_wechat: 队列已满，丢弃了 ${String(dropped)} 条最旧的待发消息`)
+        }
+      })
+      return false
+    }
+  }
+
+  /**
+   * Deliver anything queued for this conversation, now that its window is open again.
+   *
+   * Called as soon as an inbound message refreshes the reply token, and before that message is
+   * handled: the user's own turn is what reopens the window, so the backlog belongs in front of the
+   * answer rather than after it — otherwise the notifications they were waiting for appear below a
+   * reply that has nothing to do with them.
+   *
+   * A piece that is refused again stays queued for the next attempt; one whose file has since been
+   * deleted is dropped, because retrying it forever would block everything behind it.
+   *
+   * @param conversationId - Conversation whose window just opened.
+   */
+  async #flushPending(conversationId: string): Promise<void> {
+    try {
+      // Expire first, then read: reading first would hand the loop entries that were just discarded
+      // as too old, and they would go out anyway.
+      const expired = await this.#expirePending()
+      if (expired > 0) {
+        this.#recordBoot(`pending: 丢弃 ${String(expired)} 条过期的待发消息`)
+      }
+      const pending = (await this.#store.read()).pendingNotifications ?? []
+      const mine = pending.filter((entry) => entry.conversationId === conversationId)
+      if (mine.length === 0) return
+
+      const bound = await this.#boundConversation()
+      if (!bound.ok) return
+      const target = bound.target
+      if (target.conversationId !== conversationId) return
+
+      let sent = 0
+      const unsendable: string[] = []
+      for (const entry of mine) {
+        try {
+          if (entry.text.trim() !== '') {
+            await this.#sendText(
+              target.account,
+              target.conversationId,
+              target.peerId,
+              entry.text,
+              target.contextToken,
+            )
+          }
+          if (entry.path !== undefined) {
+            if (!existsSync(entry.path)) {
+              // Dropped, not retried: the text above has already gone out, so keeping the entry would
+              // repeat it on every later message and block everything queued behind it.
+              unsendable.push(basename(entry.path))
+              await this.#dropPending(entry.id)
+              continue
+            }
+            await this.#conveyFile(entry.path, undefined, target)
+          }
+          sent += 1
+          await this.#dropPending(entry.id)
+        } catch (error) {
+          // A refusal means the window closed again between the token and this send, which is odd but
+          // possible; keeping the entry is the whole point of the queue. Anything else cannot succeed
+          // on a later attempt either, so it is reported and dropped rather than retried forever.
+          if (!(error instanceof SendRefusedError)) {
+            this.#recordError(
+              `补发失败：${error instanceof Error ? error.message : String(error)}`,
+            )
+            await this.#dropPending(entry.id)
+          }
+        }
+      }
+      if (sent > 0 || unsendable.length > 0) {
+        this.#recordBoot(
+          `pending: 补发 ${String(sent)} 条到 ${conversationId}` +
+            (unsendable.length > 0 ? `；${String(unsendable.length)} 个文件已不存在` : ''),
+        )
+      }
+      if (unsendable.length > 0) {
+        await this.#notifyAboutMissingFiles(conversationId, unsendable)
+      }
+    } catch (error) {
+      // Never allowed to break the inbound message it was triggered by: the user's own turn matters
+      // more than the backlog, and a queue that throws would swallow their message.
+      this.#recordError(
+        `补发待发消息时出错：${error instanceof Error ? error.message : String(error)}`,
       )
-      did.push('消息')
     }
-    if (typeof path === 'string' && path !== '') {
-      await this.#conveyFile(path, undefined, target, signal)
-      did.push(`文件 ${basename(path)}`)
+  }
+
+  /**
+   * Drop everything past the age bound.
+   *
+   * @returns How many entries were dropped.
+   */
+  async #expirePending(): Promise<number> {
+    let dropped = 0
+    await this.#store.update((state) => {
+      dropped = expirePendingNotifications(state).length
+    })
+    return dropped
+  }
+
+  /**
+   * Remove one delivered entry.
+   *
+   * By id rather than by position: the flush loop reads the queue once, and a concurrent enqueue
+   * would shift every index under it.
+   *
+   * @param id - Identity of the entry to remove.
+   */
+  async #dropPending(id: string): Promise<void> {
+    await this.#store.update((state) => {
+      const queue = state.pendingNotifications
+      if (queue === undefined) return
+      const next = queue.filter((entry) => entry.id !== id)
+      if (next.length === 0) delete state.pendingNotifications
+      else state.pendingNotifications = next
+    })
+  }
+
+  /**
+   * Tell the user which queued files could no longer be found.
+   *
+   * Sent rather than only logged: they were promised a file, and its absence is the one part of a
+   * late delivery they cannot infer from what does arrive.
+   *
+   * @param conversationId - Conversation to tell.
+   * @param names - File names that no longer exist.
+   */
+  async #notifyAboutMissingFiles(conversationId: string, names: string[]): Promise<void> {
+    try {
+      const bound = await this.#boundConversation()
+      if (!bound.ok || bound.target.conversationId !== conversationId) return
+      await this.#sendText(
+        bound.target.account,
+        bound.target.conversationId,
+        bound.target.peerId,
+        `之前有 ${String(names.length)} 个排队发送的文件已经找不到了：${names.join('、')}`,
+        bound.target.contextToken,
+      )
+    } catch {
+      // Best effort. This is a courtesy note about a failed delivery; if it cannot be sent either,
+      // the log already has the names.
     }
-    if (did.length === 0) throw new Error('没有可发送的内容。')
-    const summary = `已通过微信发送：${did.join('、')}`
-    // Recorded because a proactive send has no other trace: nothing in the transcript shows it, and
-    // "did it actually reach the phone" is the only question that matters when it is reported.
-    this.#recordBoot(`notify_wechat: ${did.join(', ')} to ${target.conversationId}`)
-    return summary
   }
 
   /**

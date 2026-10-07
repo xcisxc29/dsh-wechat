@@ -12,9 +12,9 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
 
-import { parseWireJson, extractRawIds, baseInfo, buildHeaders, assertSendAccepted } from '../src/http.ts'
+import { parseWireJson, extractRawIds, baseInfo, buildHeaders, assertSendAccepted, SendRefusedError } from '../src/http.ts'
 import { conversationKey, extractText, toInbound, sendText } from '../src/channel.ts'
-import { StateStore } from '../src/state.ts'
+import { StateStore, expirePendingNotifications, queuePendingNotification } from '../src/state.ts'
 import {
   SessionRouter,
   mintSessionId,
@@ -24,7 +24,13 @@ import {
   HELP_TEXT,
 } from '../src/router.ts'
 import type { SessionBinding, SessionGateway } from '../src/router.ts'
+import type { ChannelState } from '../src/state.ts'
 import type { WeixinAccount, WeixinMessage } from '../src/types.ts'
+
+/** A state with nothing in it, for exercising the queue helpers. */
+function emptyState(): ChannelState {
+  return { version: 1, accounts: {}, syncBufs: {}, contextTokens: {}, bindings: {}, sentMessages: {} }
+}
 
 const account: WeixinAccount = {
   accountId: 'fd17bd2d40c3@im.bot',
@@ -665,9 +671,11 @@ test('shortId stays readable and round-trips through resolveTarget', () => {
  * refusal was reported to the user as "已通过微信发送" while the phone received nothing.
  */
 test('a send refused with errcode throws instead of returning an id', () => {
+  // The class matters as much as the message: the channel queues a refused message for the next open
+  // window, and must not do that for a failure that would repeat.
   assert.throws(
     () => assertSendAccepted({ errcode: -14, errmsg: 'session timeout' }),
-    /微信会话已超时/,
+    (error: unknown) => error instanceof SendRefusedError && error.errcode === -14,
   )
 })
 
@@ -676,7 +684,8 @@ test('a send refused with ret throws, naming the code the service gave', () => {
   // request, while the same refusal through a bare request comes back as `errcode`.
   assert.throws(
     () => assertSendAccepted({ ret: -2, errmsg: 'prepare failed' }),
-    /errcode=-2.*prepare failed/,
+    (error: unknown) =>
+      error instanceof SendRefusedError && /errcode=-2.*prepare failed/.test(error.message),
   )
 })
 
@@ -686,6 +695,62 @@ test('a send the service accepted is left alone', () => {
   assertSendAccepted({ message_id: '1' })
   assertSendAccepted({ message_id: '1', ret: 0 })
   assertSendAccepted({ message_id: '1', errcode: 0, errmsg: '' })
+})
+
+test('queuePendingNotification stamps an id and a time, and drops the oldest when full', () => {
+  const state = emptyState()
+  for (let i = 0; i < 3; i += 1) {
+    queuePendingNotification(state, { conversationId: 'c', text: `第 ${String(i)} 条` }, 1000 + i, 2)
+  }
+  assert.deepEqual(
+    state.pendingNotifications?.map((entry) => entry.text),
+    ['第 1 条', '第 2 条'],
+    'the oldest goes first: the queue is a backlog, read in order',
+  )
+  assert.equal(state.pendingNotifications?.[0].queuedAt, 1001, 'the injected clock is used')
+  assert.ok(state.pendingNotifications?.[0].id, 'every entry gets an identity')
+  assert.notEqual(
+    state.pendingNotifications?.[0].id,
+    state.pendingNotifications?.[1].id,
+    'two identical messages queued in the same millisecond stay distinguishable',
+  )
+})
+
+test('expirePendingNotifications keeps the fresh and drops the stale', () => {
+  const state = emptyState()
+  queuePendingNotification(state, { conversationId: 'c', text: '旧的' }, 0)
+  queuePendingNotification(state, { conversationId: 'c', text: '新的' }, 9_000)
+
+  const dropped = expirePendingNotifications(state, 10_000, 5_000)
+
+  assert.deepEqual(dropped.map((entry) => entry.text), ['旧的'])
+  assert.deepEqual(state.pendingNotifications?.map((entry) => entry.text), ['新的'])
+})
+
+test('a malformed pending entry is dropped when the state is read back', async () => {
+  /*
+   * This array is read from a user-editable file and then sent, so an entry missing its conversation
+   * would reach the send path as `undefined` — a crash on the one path that exists to survive a
+   * failure.
+   */
+  const home = await mkdtemp(join(tmpdir(), 'dsh-wechat-state-'))
+  try {
+    const store = new StateStore(join(home, 'state.json'))
+    const good = { id: 'k', conversationId: 'c', text: '好的', queuedAt: 1 }
+    await store.update((state) => {
+      state.pendingNotifications = [
+        good,
+        { conversationId: 'c', text: '没有 id' },
+        { id: 'x', text: '没有 conversation' },
+        { id: 'y', conversationId: 'c', text: 42 },
+      ] as never
+    })
+
+    const read = await new StateStore(join(home, 'state.json')).read()
+    assert.deepEqual(read.pendingNotifications, [good], 'only the well-formed entry survives')
+  } finally {
+    await rm(home, { recursive: true, force: true })
+  }
 })
 
 test('sendText surfaces a refusal rather than reporting success', async () => {

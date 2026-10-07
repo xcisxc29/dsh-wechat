@@ -20,6 +20,30 @@ import { APP_CLIENT_VERSION, APP_ID, CHANNEL_VERSION, DEFAULT_BOT_AGENT, DEFAULT
 import type { BaseInfo, SendMessageResp } from './types.ts'
 
 /**
+ * A send the service refused.
+ *
+ * Distinct from every other failure on this path because it is the one kind that can succeed later
+ * without anything changing on our side: the refusal means the reply window is closed, and the next
+ * inbound message opens it. Retrying immediately cannot help, but keeping the message until then can
+ * — which is what the channel does with it, and why the caller needs to tell this apart from "the
+ * file does not exist" or "the network is down".
+ */
+export class SendRefusedError extends Error {
+  /** The code the service gave, kept for the log and for tests. */
+  readonly errcode: number
+
+  /**
+   * @param message - What to tell the user.
+   * @param errcode - The refusal code from the service.
+   */
+  constructor(message: string, errcode: number) {
+    super(message)
+    this.name = 'SendRefusedError'
+    this.errcode = errcode
+  }
+}
+
+/**
  * Throw when the service refused a send.
  *
  * Every send endpoint answers HTTP 200 whether it accepted the message or not, and reports a refusal
@@ -32,7 +56,7 @@ import type { BaseInfo, SendMessageResp } from './types.ts'
  * with either; both are checked so a response shape change cannot reopen this hole.
  *
  * @param response - Parsed response from `ilink/bot/sendmessage`.
- * @throws When the service refused, with the reason it gave.
+ * @throws {SendRefusedError} When the service refused, with the reason it gave.
  */
 export function assertSendAccepted(response: SendMessageResp): void {
   const errcode = response.errcode ?? response.ret
@@ -40,13 +64,16 @@ export function assertSendAccepted(response: SendMessageResp): void {
 
   if (errcode === STALE_TOKEN_ERRCODE) {
     // Specifically actionable, unlike a generic failure: the conversation has gone quiet long enough
-    // that the reply context expired, and only an inbound message from the user can revive it. The
-    // agent can say so instead of retrying into the same refusal.
-    throw new Error(
+    // that the reply context expired, and only an inbound message from the user can revive it.
+    throw new SendRefusedError(
       '微信会话已超时（session timeout）。需要用户先在微信里给机器人发一条消息，之后才能主动推送。',
+      errcode,
     )
   }
-  throw new Error(`发送被微信拒绝：errcode=${String(errcode)} errmsg=${response.errmsg ?? '(无)'}`)
+  throw new SendRefusedError(
+    `发送被微信拒绝：errcode=${String(errcode)} errmsg=${response.errmsg ?? '(无)'}`,
+    errcode,
+  )
 }
 
 /**
