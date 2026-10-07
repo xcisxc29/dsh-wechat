@@ -1682,7 +1682,7 @@ class WechatRuntime {
     const send = tools.register({
       name: 'send_to_wechat',
       description:
-        'Send a file from this machine to the WeChat conversation that asked for it. Images arrive as photos, videos as playable clips, and everything else as a file attachment, chosen from the path extension. Use this whenever the user asked to see, receive, or be sent a file, image, screenshot, chart, or video. The path must be absolute and inside the session workspace.',
+        'Send a file from this machine to the WeChat conversation that asked for it. Images arrive as photos, videos as playable clips, and everything else as a file attachment, chosen from the path extension. Use this whenever the user asked to see, receive, or be sent a file, image, screenshot, chart, or video. The path must be absolute and may point anywhere on this machine — a file on the Desktop or in a project folder is sent as it is, with no need to copy it anywhere first.',
       parameters: {
         type: 'object',
         properties: {

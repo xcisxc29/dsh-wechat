@@ -924,6 +924,17 @@ test('the agent gets send_to_wechat, session_control and notify_wechat', async (
     assert.deepEqual(tool.parameters.required, ['path'])
     assert.match(tool.description, /WeChat/)
 
+    /*
+     * The description must not claim the file has to live in the session workspace.
+     *
+     * It said exactly that, and nothing enforced it: the send path accepts any path the process can
+     * read. The cost was user-visible — an agent that believes the restriction tells the user to copy
+     * the file first, or refuses outright, so a photo on the Desktop looked impossible to send. The
+     * description is the only thing that decides this behaviour, which is why it is asserted.
+     */
+    assert.doesNotMatch(tool.description, /inside the session workspace/i)
+    assert.match(tool.description, /anywhere on this machine/i)
+
     // The exact shape registration validates. Getting it wrong throws a
     // JsonSchemaError out of `apply`, which fails plugin activation and takes the
     // whole desktop application down — the worst possible failure for a schema typo.
