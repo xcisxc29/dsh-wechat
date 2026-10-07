@@ -162,8 +162,10 @@ is done" work: the session doing the work is usually not the one your WeChat con
 and without this it could not report its own result. Turn off **Let other sessions push to WeChat** to
 restore the stricter rule, where only the bound session may send.
 
-So **the bot's WeChat account, and who can reach it, are the security boundary**. There is no
-allowlist in this version. If that is not a boundary you want, do not install it.
+So **the bot's WeChat account, and who can reach it, are the security boundary**. There is deliberately
+no allowlist, and none is planned: choosing to drive a computer over WeChat already means accepting
+that being able to message it is being able to operate it, and a second gate in front of the same
+decision would add nothing. If that is not a boundary you want, do not install it.
 
 Put another way: **being able to message your bot is the same as being able to operate your computer,
 without being asked.**
