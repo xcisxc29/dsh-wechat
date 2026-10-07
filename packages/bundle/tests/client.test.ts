@@ -705,4 +705,23 @@ test('the page and the host agree on the route prefix', async () => {
     PREFIX,
     'the host route prefix and the page\'s PREFIX constant must be the same string',
   )
+
+  /*
+   * `routes.ts` is the third copy of this string, and it is the one that decides the paths the host
+   * actually answers on: `host.ts` registers a prefix, but `routes.ts` composes the concrete paths
+   * from its own `ROUTE_PREFIX`.
+   *
+   * Missing it shipped a broken release. The package was renamed, `host.ts` and `client.js` were
+   * updated, and `routes.ts` was not — so the host registered `/.dsh-wechat-plugin` while every
+   * handler compared against `/.dsh-wechat/…`. The settings page showed "status unavailable" and
+   * nothing worked. The assertion above passed throughout, because it only checked the two copies that
+   * had been edited. Hence this one: all three, always.
+   */
+  const routesSource = await readFile(join(here, '..', 'src', 'routes.ts'), 'utf8')
+  const routePrefix = /ROUTE_PREFIX\s*=\s*'([^']+)'/.exec(routesSource)?.[1]
+  assert.equal(
+    routePrefix,
+    PREFIX,
+    'ROUTE_PREFIX in routes.ts must equal the page\'s PREFIX: it is what the host answers on',
+  )
 })

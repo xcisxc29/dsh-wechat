@@ -10,7 +10,7 @@
  */
 
 /** Route prefix registered on the DSH web server. */
-export const ROUTE_PREFIX = '/.dsh-wechat'
+export const ROUTE_PREFIX = '/.dsh-wechat-plugin'
 
 /** `GET` — current channel status. */
 export const ROUTE_STATUS = `${ROUTE_PREFIX}/status`
