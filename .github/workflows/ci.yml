@@ -68,13 +68,25 @@ jobs:
       - name: Confirm the tarball carries its documentation
         shell: bash
         run: |
-          set -euo pipefail
+          set -eu
           tarball=$(ls dsh-wechat-plugin-*.tgz | sort | tail -n1)
+          # `tar` reads the whole archive once rather than once per file, and the pipe into `grep -q`
+          # is gone on purpose: `grep -q` exits the moment it matches, which sends SIGPIPE to `tar`,
+          # and under `pipefail` that made a *successful* match report failure. This step failed on
+          # both platforms with the file plainly present in the tarball.
+          listing=$(tar -tzf "$tarball")
+          missing=0
           for required in package/README.md package/LICENSE package/cordis.patch.yml; do
-            tar -tzf "$tarball" | grep -qx "$required" || {
-              echo "the tarball is missing $required"
-              tar -tzf "$tarball"
-              exit 1
-            }
+            if printf '%s\n' "$listing" | grep -qx "$required"; then
+              echo "  ok   $required"
+            else
+              echo "  MISSING $required"
+              missing=1
+            fi
           done
+          if [ "$missing" -ne 0 ]; then
+            echo "tarball $tarball actually contains:"
+            printf '%s\n' "$listing"
+            exit 1
+          fi
           echo "$tarball carries README, LICENSE and the patch file."

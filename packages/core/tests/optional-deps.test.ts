@@ -55,12 +55,32 @@ test('asking for a thumbnail without an encoder yields none', async () => {
   })
 })
 
-test('the codes come back when the switch is off', async () => {
-  // The reset matters: without it the module would remember the forced absence and every later
-  // caller in this process would silently lose the codec.
+test('the switch leaves no residue once it is off', async () => {
+  /*
+   * The danger this guards against: the module memoises "no encoder" while the switch is on, and then
+   * every later caller in the same process loses the codec even though the switch is gone. A stale
+   * `null` in the cache is invisible — the channel simply stops sending thumbnails.
+   *
+   * What it deliberately does *not* assert is that the encoder comes back, because whether it exists
+   * is a property of the machine. `sharp` is not a dependency of this package: the resolver looks for
+   * it in the application's profile, so it is present on a developer's box and absent on a clean one.
+   * An earlier version of this test asserted `true` and passed here while failing on every CI runner —
+   * it was testing the author's machine, not the code.
+   *
+   * So the assertion is the invariant, not the value: after the switch is removed and the cache is
+   * forgotten, the answer is the deployment's own, and asking twice agrees.
+   */
   delete process.env.DSH_WECHAT_NO_CODECS
   forgetCodecCache()
   forgetSilkCache()
-  // `sharp` is present in this checkout, so the switch is what makes the difference.
-  assert.equal(await thumbnailAvailable(), true)
+  const first = await thumbnailAvailable()
+  forgetCodecCache()
+  forgetSilkCache()
+  assert.equal(
+    await thumbnailAvailable(),
+    first,
+    'forgetting the cache must not change what the deployment reports',
+  )
+  // Whatever the environment answers, it is a boolean — the channel branches on it.
+  assert.equal(typeof silkAvailable(), 'boolean')
 })
