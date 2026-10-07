@@ -1,0 +1,16 @@
+# Build output
+lib/
+dist/
+*.tgz
+
+# Local verification artifacts
+.verify/
+.smoke/
+
+# Dependencies
+node_modules/
+
+# Editor and OS noise
+.DS_Store
+Thumbs.db
+*.log

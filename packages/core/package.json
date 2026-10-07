@@ -1,0 +1,28 @@
+{
+  "name": "@dsh-wechat/core",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "WeChat ClawBot (Tencent iLink Bot API) client: QR login, long-poll inbound, text outbound.",
+  "main": "lib/index.js",
+  "types": "lib/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./lib/index.d.ts",
+      "default": "./lib/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "lib"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "node --experimental-transform-types --disable-warning=ExperimentalWarning --test --test-isolation=none tests/core.test.ts"
+  },
+  "license": "MIT",
+  "dependencies": {
+    "qrcode": "^1.5.4"
+  }
+}
