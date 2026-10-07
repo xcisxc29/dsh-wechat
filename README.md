@@ -157,6 +157,11 @@ on a phone every command would stall until you answered a conversation you had w
 **Permissions for WeChat conversations** to `Follow the DSH setting` in the settings page if you want
 the same guardrails you have at the desk.
 
+**Any session on this machine can push to your WeChat by default.** That is what makes "tell me when it
+is done" work: the session doing the work is usually not the one your WeChat conversation is bound to,
+and without this it could not report its own result. Turn off **Let other sessions push to WeChat** to
+restore the stricter rule, where only the bound session may send.
+
 So **the bot's WeChat account, and who can reach it, are the security boundary**. There is no
 allowlist in this version. If that is not a boundary you want, do not install it.
 

@@ -108,6 +108,19 @@ export interface ChannelSettings {
    * already run.
    */
   permissionPreset?: PermissionPreset
+  /**
+   * Whether a session that is not the bound one may push to the WeChat conversation.
+   *
+   * **On by default**, and that default is the point of the feature: the reason to run DSH from a
+   * phone is to leave the desk, and a task that finishes while the user is away is worthless if its
+   * result cannot reach them. Whoever is doing the work can then say so.
+   *
+   * What it costs: any session on this machine can reach the user's phone. That is a deliberate
+   * widening, and it is not the bug that removed `sessionOwners` — that was a session *impersonating*
+   * a conversation it no longer had, while this only ever delivers *to* the conversation the user is
+   * currently in. Turn it off to restore the stricter rule, where only the bound session may send.
+   */
+  allowCrossSessionNotify?: boolean
 }
 
 /** Permission presets this channel will apply to its own sessions. */
@@ -122,6 +135,7 @@ export const DEFAULT_SETTINGS = {
   autoReplyAttachments: true,
   requireConfirmation: true,
   permissionPreset: 'danger-full-access',
+  allowCrossSessionNotify: true,
   presenceNote:
     '[渠道：微信] 你在和微信上的用户对话，对方在手机上，看不到这台电脑的屏幕和文件系统。' +
     '不要让他去"打开某个路径"或"看某个文件"。需要给他看东西时，直接发送：' +
@@ -146,6 +160,8 @@ export function resolveSettings(state: ChannelState): Required<ChannelSettings> 
       stored.autoReplyAttachments ?? DEFAULT_SETTINGS.autoReplyAttachments,
     requireConfirmation: stored.requireConfirmation ?? DEFAULT_SETTINGS.requireConfirmation,
     permissionPreset: stored.permissionPreset ?? DEFAULT_SETTINGS.permissionPreset,
+    allowCrossSessionNotify:
+      stored.allowCrossSessionNotify ?? DEFAULT_SETTINGS.allowCrossSessionNotify,
     presenceNote: stored.presenceNote ?? DEFAULT_SETTINGS.presenceNote,
   }
 }

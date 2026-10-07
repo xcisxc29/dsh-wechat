@@ -905,13 +905,13 @@ function assertSupportedSchema(schema: Record<string, unknown>, path = 'schema')
   }
 }
 
-test('the send_to_wechat and session_control tools are registered for the agent', async () => {
+test('the agent gets send_to_wechat, session_control and notify_wechat', async () => {
   await withHarness(async (harness) => {
-    // Two, and exactly two. A third would mean a registration path ran twice, which leaves a
-    // duplicate tool in the agent's list and a stale description behind.
+    // Exactly these three. A duplicate would mean a registration path ran twice, which leaves an
+    // extra tool in the agent's list and a stale description behind.
     assert.deepEqual(
       harness.registeredTools.map((tool) => (tool as { name?: string }).name),
-      ['send_to_wechat', 'session_control'],
+      ['send_to_wechat', 'session_control', 'notify_wechat'],
     )
 
     const tool = harness.registeredTools[0] as {
@@ -2201,6 +2201,71 @@ async function seedState(home: string, settings: Record<string, unknown>): Promi
   )
 }
 
+/** The `notify_wechat` tool, driven the way the agent would drive it. */
+function notifyTool(harness: Harness): {
+  execute(
+    args: Record<string, unknown>,
+    exec: { agent?: unknown },
+  ): Promise<{ detail: string }>
+} {
+  const candidate = harness.registeredTools.find(
+    (tool) => (tool as { name?: string }).name === 'notify_wechat',
+  )
+  assert.ok(candidate, 'notify_wechat must be registered')
+  return candidate as ReturnType<typeof notifyTool>
+}
+
+/**
+ * Seed a state whose WeChat conversation is bound to a session that is *not* the caller.
+ *
+ * A conversation has to exist for a proactive send to have anywhere to go, and — for the interesting
+ * case — it must be bound to some other session, so the caller is genuinely the foreign one this
+ * feature exists for.
+ *
+ * @param home - DSH home to write into.
+ * @param settings - Extra settings to store alongside the defaults.
+ */
+async function seedBoundConversation(
+  home: string,
+  settings: Record<string, unknown> = {},
+): Promise<void> {
+  await mkdir(join(home, 'wechat'), { recursive: true })
+  await writeFile(
+    join(home, 'wechat', 'state.json'),
+    `${JSON.stringify(
+      {
+        version: 1,
+        accounts: {
+          'test@im.bot': {
+            accountId: 'test@im.bot',
+            token: 'token',
+            baseUrl: 'https://example.invalid',
+            userId: 'peer@im.wechat',
+          },
+        },
+        syncBufs: {},
+        contextTokens: { 'test@im.bot': { 'test@im.bot:peer@im.wechat': 'ctx-token-1' } },
+        bindings: {
+          'test@im.bot:peer@im.wechat': {
+            conversationId: 'test@im.bot:peer@im.wechat',
+            accountId: 'test@im.bot',
+            peerId: 'peer@im.wechat',
+            sessionId: 'session-wechat-bound',
+            title: '微信那边',
+            createdAt: 1,
+            lastUsedAt: 1,
+          },
+        },
+        sentMessages: {},
+        settings: { ...DEFAULT_SETTINGS, ...settings },
+      },
+      null,
+      2,
+    )}\n`,
+    'utf8',
+  )
+}
+
 test('settings changes apply without a restart', async () => {
   await withHarness(async (harness) => {
     const before = await harness.runtime.settingsForPage()
@@ -2211,6 +2276,70 @@ test('settings changes apply without a restart', async () => {
     assert.equal(after.settings.mergeWindowMs, 0)
     // The defaults stay reported, so the page can offer "reset to default".
     assert.equal(after.defaults.mergeWindowMs, 10_000)
+  })
+})
+
+test('a session that is not the bound one can push to WeChat', async () => {
+  /*
+   * The feature this exists for: the user starts work at the desk, leaves, and the result has to
+   * reach their phone. The session doing that work is not the one the WeChat conversation is bound
+   * to, so `send_to_wechat` refuses it — which is why this tool resolves the target from the store
+   * rather than from the caller.
+   */
+  const home = await mkdtemp(join(tmpdir(), 'dsh-wechat-test-'))
+  try {
+    await seedBoundConversation(home)
+    const harness = await mount({ home, seedAccount: false })
+    try {
+      const result = await notifyTool(harness).execute(
+        { text: '构建完成了' },
+        { agent: { session: { id: 'session-somewhere-else' } } },
+      )
+
+      assert.match(result.detail, /已通过微信发送/)
+      assert.equal(harness.sent.length, 1, 'exactly one message leaves')
+      assert.equal(harness.sent[0].text, '构建完成了')
+      assert.equal(harness.sent[0].to, 'peer@im.wechat')
+      // The reply token is echoed, so the message lands in the existing conversation rather than
+      // starting a new one.
+      assert.equal(harness.sent[0].contextToken, 'ctx-token-1')
+    } finally {
+      harness.dispose()
+    }
+  } finally {
+    await removeHome(home)
+  }
+})
+
+test('turning the setting off restores the bound-session rule', async () => {
+  const home = await mkdtemp(join(tmpdir(), 'dsh-wechat-test-'))
+  try {
+    await seedBoundConversation(home, { allowCrossSessionNotify: false })
+    const harness = await mount({ home, seedAccount: false })
+    try {
+      await assert.rejects(
+        async () =>
+          await notifyTool(harness).execute(
+            { text: '应该被拒绝' },
+            { agent: { session: { id: 'session-somewhere-else' } } },
+          ),
+        /没有绑定微信对话/,
+      )
+      assert.equal(harness.sent.length, 0, 'nothing is sent when the setting is off')
+    } finally {
+      harness.dispose()
+    }
+  } finally {
+    await removeHome(home)
+  }
+})
+
+test('a proactive send with no bound conversation says so instead of failing silently', async () => {
+  await withHarness(async (harness) => {
+    await assert.rejects(
+      async () => await notifyTool(harness).execute({ text: '有人吗' }, { agent: { session: { id: 'x' } } }),
+      /还没有微信对话/,
+    )
   })
 })
 

@@ -128,6 +128,9 @@ window.__ModuleLoader__.load({
         permissionFull: '完全访问：不询问，直接执行',
         permissionAuto: '自动审核：电脑上判断',
         permissionProfile: '跟随 DSH 设置：和桌面端一样',
+        allowCrossSessionNotify: '允许其他会话推送到微信',
+        allowCrossSessionNotifyHint:
+          '开启后，任何会话都能主动发消息或文件到你微信——包括你正在电脑上干活、它做完后通知你的情况。关掉则只有微信对话自己那个会话能发。',
         mergeWindow: '非文字消息等待时间（秒）',
         mergeWindowHint: '等多久。等待期间你发文字，就和附件一起处理；超时则只处理附件。',
         autoReplyAttachments: '等不到文字就自动处理附件',
@@ -213,6 +216,9 @@ window.__ModuleLoader__.load({
         permissionFull: 'Full access: run without asking',
         permissionAuto: 'Automatic review: decided on this computer',
         permissionProfile: 'Follow the DSH setting, same as the desktop',
+        allowCrossSessionNotify: 'Let other sessions push to WeChat',
+        allowCrossSessionNotifyHint:
+          'On, any session may send you a message or a file — which is how a task that finishes while you are away can still reach you. Off, only the session the WeChat conversation is bound to may send.',
         mergeWindow: 'Wait after a non-text message (seconds)',
         mergeWindowHint:
           'How long to wait. Text sent during the wait is handled with the attachment; after it, only the attachment.',
@@ -879,6 +885,28 @@ window.__ModuleLoader__.load({
                   h('option', { value: 'auto' }, t.permissionAuto),
                   h('option', { value: 'default' }, t.permissionProfile),
                 ),
+              ),
+
+              /*
+               * On by default, unlike every other toggle here that widens access, because the feature
+               * is useless otherwise: the whole point is to hear about work that finished after the
+               * user left the desk, and the session doing that work is usually not the bound one.
+               */
+              h(
+                'div',
+                { className: 'dsh-wechat-row' },
+                h(
+                  'div',
+                  { className: 'dsh-wechat-row-text' },
+                  h('label', null, t.allowCrossSessionNotify),
+                  h('span', { className: 'dsh-wechat-hint' }, t.allowCrossSessionNotifyHint),
+                ),
+                h(Toggle, {
+                  checked: state.draft.allowCrossSessionNotify === true,
+                  label: t.allowCrossSessionNotify,
+                  disabled: state.busy,
+                  onChange: (next) => edit('allowCrossSessionNotify', next),
+                }),
               ),
 
               h(

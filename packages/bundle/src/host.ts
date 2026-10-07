@@ -1720,13 +1720,134 @@ class WechatRuntime {
     // The registry stores the description as given, so a change to the confirmation setting has to
     // re-register rather than mutate. Holding the disposer here is what lets `saveSettings` do it.
     const control = tools.register(this.#sessionToolDefinition())
-    this.#sessionToolDisposer = control
+
+    /*
+     * The proactive half. `send_to_wechat` only works for the session the WeChat conversation is
+     * bound to, which means the session doing the work usually cannot report its own result: the user
+     * asks for something, walks away, and the answer dies with the turn.
+     *
+     * This tool resolves the *currently bound* conversation from the store instead of from the
+     * caller, so any session can deliver to the phone the user is actually holding. It never takes a
+     * target argument, so there is nothing an agent can aim wrongly.
+     */
+    const notify = tools.register({
+      name: 'notify_wechat',
+      description:
+        'Push a message, and optionally a file, to the user\'s WeChat. Unlike send_to_wechat this works from any session, including one the WeChat conversation is not currently bound to, which is what makes "tell me when it is done" possible. Always reaches the conversation the user is currently in; there is no way to choose another. Use it to report a finished task, or to send a file the user asked to receive. Keep text short — it is read on a phone.',
+      parameters: {
+        type: 'object',
+        properties: {
+          text: {
+            type: 'string',
+            description: 'The message to send. Short, and written for a phone.',
+          },
+          path: {
+            type: 'string',
+            description:
+              'Optional absolute path of a file to send after the text. Images arrive as photos, videos as playable clips, everything else as a file attachment.',
+          },
+        },
+        required: ['text'],
+        additionalProperties: false,
+      },
+      output: {
+        schema: {
+          type: 'object',
+          additionalProperties: false,
+          properties: { detail: { type: 'string' } },
+          required: ['detail'],
+        },
+        render: (args) => [
+          { type: 'text', text: `notify WeChat${args.path === undefined ? '' : ` with ${String(args.path)}`}` },
+        ],
+      },
+      execute: async (args, exec) => ({
+        detail: await this.#notifyWechat(String(args.text ?? ''), args.path, exec),
+      }),
+    })
 
     return () => {
       this.#sessionToolDisposer = undefined
       send()
       control()
+      notify()
     }
+  }
+
+  /**
+   * Deliver a message, and optionally a file, to the bound WeChat conversation.
+   *
+   * @param text - Message to send. Sent first, so a file arrives with its explanation already there.
+   * @param path - Optional absolute path of a file to send after the text.
+   * @param exec - Tool execution context, used for cancellation and for the fallback check.
+   * @returns A short human-readable outcome.
+   */
+  async #notifyWechat(
+    text: string,
+    path: unknown,
+    exec: { readonly signal?: AbortSignal; readonly agent?: unknown },
+  ): Promise<string> {
+    if (text.trim() === '' && typeof path !== 'string') {
+      throw new Error('至少要给 text 或 path 其中一个。')
+    }
+
+    /*
+     * With the setting off, this behaves exactly as `send_to_wechat` does: the caller has to be the
+     * bound session. That keeps the older, stricter rule reachable rather than deleting it, so
+     * turning the setting off restores the previous security posture instead of only disabling a
+     * convenience.
+     */
+    if (!this.#settingsFromDisk().allowCrossSessionNotify) {
+      const own = await this.#conversationForAgent(exec.agent)
+      if (own === undefined) {
+        throw new Error(
+          '这个会话没有绑定微信对话，而「允许其他会话推送到微信」是关闭的。请让用户在设置里打开它，或先在微信里发一条消息。',
+        )
+      }
+      return await this.#deliverTo(own, text, path, exec.signal)
+    }
+
+    const bound = await this.#boundConversation()
+    if (!bound.ok) throw new Error(bound.reason)
+    return await this.#deliverTo(bound.target, text, path, exec.signal)
+  }
+
+  /**
+   * Send the text and then the file, into one already-resolved conversation.
+   *
+   * @param target - Conversation to deliver to.
+   * @param text - Message to send; skipped when empty.
+   * @param path - File to send; skipped unless it is a string.
+   * @param signal - Cancellation from the caller, when there is one.
+   * @returns What was sent, for the agent to report.
+   */
+  async #deliverTo(
+    target: { account: WeixinAccount; peerId: string; conversationId: string; contextToken?: string },
+    text: string,
+    path: unknown,
+    signal?: AbortSignal,
+  ): Promise<string> {
+    const did: string[] = []
+    if (text.trim() !== '') {
+      await this.#sendText(
+        target.account,
+        target.conversationId,
+        target.peerId,
+        text,
+        target.contextToken,
+      )
+      did.push('消息')
+    }
+    if (typeof path === 'string' && path !== '') {
+      await this.#conveyFile(path, undefined, target, signal)
+      did.push(`文件 ${basename(path)}`)
+    }
+    if (did.length === 0) throw new Error('没有可发送的内容。')
+    const summary = `已通过微信发送：${did.join('、')}`
+    // Recorded because a proactive send has no other trace: nothing in the transcript shows it, and
+    // "did it actually reach the phone" is the only question that matters when it is reported.
+    this.#recordBoot(`notify_wechat: ${did.join(', ')} to ${target.conversationId}`)
+    return summary
   }
 
   /**
@@ -1932,11 +2053,62 @@ class WechatRuntime {
 
     const state = await this.#store.read()
     const binding = Object.values(state.bindings).find((entry) => entry.sessionId === sessionId)
-    if (binding === undefined) return undefined
+    return this.#conversationOf(state, binding)
+  }
 
+  /**
+   * The conversation the channel is currently bound to, whoever is asking.
+   *
+   * This is what lets a session that is *not* the bound one deliver a message — the point of
+   * `notify_wechat`. The target is read from the binding rather than taken from the caller, so a
+   * proactive message can only ever reach the conversation the user is actually in; there is no
+   * argument an agent could get wrong and send somewhere else.
+   *
+   * Refuses when several conversations are bound rather than guessing: sending a file to the wrong
+   * person is not a failure worth risking to save an error message. Today the channel binds one, so
+   * this is a guard against a future that adds accounts.
+   *
+   * @returns The bound conversation, or a reason it cannot be resolved.
+   */
+  async #boundConversation(): Promise<
+    | { ok: true; target: { account: WeixinAccount; peerId: string; conversationId: string; contextToken?: string } }
+    | { ok: false; reason: string }
+  > {
+    const state = await this.#store.read()
+    const bindings = Object.values(state.bindings)
+    if (bindings.length === 0) {
+      return { ok: false, reason: '还没有微信对话。请先在微信里给机器人发一条消息，之后才能主动推送。' }
+    }
+    if (bindings.length > 1) {
+      return {
+        ok: false,
+        reason: `当前绑定了 ${String(bindings.length)} 个微信对话，无法确定发给哪一个。请先解绑多余的。`,
+      }
+    }
+    const target = this.#conversationOf(state, bindings[0])
+    if (target === undefined) {
+      return { ok: false, reason: '绑定的微信账号已经不在状态里，请重新扫码绑定。' }
+    }
+    return { ok: true, target }
+  }
+
+  /**
+   * Turn one stored binding into everything a send needs.
+   *
+   * Shared by the agent-scoped and conversation-scoped lookups so the two cannot drift: the rules
+   * about which account and which reply token apply are the same either way.
+   *
+   * @param state - State the binding came from.
+   * @param binding - Stored binding, or undefined when there was none.
+   * @returns The conversation, or undefined when the account is gone.
+   */
+  #conversationOf(
+    state: ChannelState,
+    binding: SessionBinding | undefined,
+  ): { account: WeixinAccount; peerId: string; conversationId: string; contextToken?: string } | undefined {
+    if (binding === undefined) return undefined
     const account = state.accounts[binding.accountId]
     if (account === undefined) return undefined
-
     const contextToken = state.contextTokens[binding.accountId]?.[binding.conversationId]
     return {
       account,
@@ -3100,6 +3272,9 @@ function readSettingsPatch(body: Record<string, unknown>): ChannelSettings {
     body.permissionPreset === 'default'
   ) {
     patch.permissionPreset = body.permissionPreset
+  }
+  if (typeof body.allowCrossSessionNotify === 'boolean') {
+    patch.allowCrossSessionNotify = body.allowCrossSessionNotify
   }
   return patch
 }
