@@ -42,17 +42,6 @@ export interface ChannelState {
   /** Conversation-to-session mapping, so a chat keeps its session across restarts. */
   bindings: Record<string, SessionBinding>
   /**
-   * Every conversation a session has belonged to, keyed by session id.
-   *
-   * `bindings` records only where a conversation is *now*, which is not enough to answer "which
-   * conversation does this session belong to". After `/new` the conversation points at the newer
-   * session, so a tool called from the older one finds no binding and fails — including
-   * `send_to_wechat`, which would stop working in exactly the session a user switched back to.
-   * This is the other direction of the same relation, and it is many-to-one by design: one
-   * conversation can own many sessions over its life.
-   */
-  sessionOwners: Record<string, string>
-  /**
    * Messages this channel sent, newest last, per account and then per conversation.
    *
    * A quoted message arrives as an id and nothing else — its `message_item` carries `type: 0`
@@ -161,7 +150,6 @@ const EMPTY_STATE: ChannelState = {
   syncBufs: {},
   contextTokens: {},
   bindings: {},
-  sessionOwners: {},
   sentMessages: {},
 }
 
@@ -307,33 +295,12 @@ function normalize(parsed: Partial<ChannelState>): ChannelState {
       ? (parsed.contextTokens as Record<string, Record<string, string>>)
       : {},
     bindings: isRecord(parsed.bindings) ? (parsed.bindings as Record<string, SessionBinding>) : {},
-    // Derived from `bindings` when absent, so a state file written before this field existed still
-    // resolves the session a conversation is currently on.
-    sessionOwners: isRecord(parsed.sessionOwners)
-      ? (parsed.sessionOwners as Record<string, string>)
-      : ownerMapFrom(parsed.bindings),
     sentMessages: isRecord(parsed.sentMessages)
       ? (parsed.sentMessages as Record<string, Record<string, SentMessage[]>>)
       : {},
     ...(isRecord(parsed.settings) ? { settings: normalizeSettings(parsed.settings) } : {}),
     ...(typeof parsed.autoStart === 'boolean' ? { autoStart: parsed.autoStart } : {}),
   }
-}
-
-/**
- * Derive the session-to-owner map from stored bindings.
- *
- * @param bindings - Whatever the file held for `bindings`.
- * @returns Owner entries for every binding that carries both ids.
- */
-function ownerMapFrom(bindings: unknown): Record<string, string> {
-  if (!isRecord(bindings)) return {}
-  const owners: Record<string, string> = {}
-  for (const [conversationId, value] of Object.entries(bindings)) {
-    const sessionId = (value as { sessionId?: unknown } | null)?.sessionId
-    if (typeof sessionId === 'string' && sessionId !== '') owners[sessionId] = conversationId
-  }
-  return owners
 }
 
 /**

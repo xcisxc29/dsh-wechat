@@ -233,10 +233,9 @@ class FakeGateway implements SessionGateway {
   }
 }
 
-/** In-memory binding store, recording session ownership the way the host does. */
+/** In-memory binding store. */
 function memoryStore() {
   let data: Record<string, SessionBinding> = {}
-  const owners: Record<string, string> = {}
   return {
     async load() {
       return data
@@ -244,10 +243,6 @@ function memoryStore() {
     async save(next: Record<string, SessionBinding>) {
       data = next
     },
-    async rememberOwner(sessionId: string, conversationId: string) {
-      owners[sessionId] = conversationId
-    },
-    owners,
     peek: () => data,
   }
 }
@@ -369,7 +364,18 @@ test('/list shows this workspace and mentions the rest, and /list all shows ever
   assert.doesNotMatch(all.text, /另有/, 'nothing is being held back now')
 })
 
-test('every session a conversation has used keeps pointing back at it', async () => {
+test('a binding moves on, and switching back points at that session again', async () => {
+  /*
+   * This replaced a test of the session-owner map, which was removed.
+   *
+   * The map existed to answer "which conversation does this session belong to?" for sessions a
+   * conversation had left, because `bindings` only records where it is now. That turned out to be
+   * unnecessary — and actively harmful: a session the conversation had moved away from stayed an
+   * owner forever, and ownership was being read as permission to send messages. A conversation that
+   * switched away left its former session able to speak for it indefinitely.
+   *
+   * What actually has to hold is the pair below: the binding moves, and switching back restores it.
+   */
   const gateway = new FakeGateway()
   const store = memoryStore()
   const router = new SessionRouter({ gateway, store })
@@ -379,14 +385,23 @@ test('every session a conversation has used keeps pointing back at it', async ()
   if (first.kind !== 'prompt') return
   await router.route({ ...conversation, text: '/new 修复登录' })
 
-  // `bindings` now points at the new session only. The owner map is what still answers "whose is
-  // this?" for the older one — without it a tool called from a session the user switched back to,
-  // `send_to_wechat` included, could not find its conversation and failed.
-  assert.equal(store.owners[first.decision.sessionId], conversation.conversationId)
+  // The binding moved: the old session is no longer the one this conversation points at.
   assert.equal(
     Object.values(store.peek()).some((entry) => entry.sessionId === first.decision.sessionId),
     false,
     'the binding really did move on',
+  )
+
+  // And switching back by short id restores it, so tools called from it resolve again — which is the
+  // case the owner map was built for, now handled by the binding itself.
+  const back = await router.route({ ...conversation, text: `/switch ${shortId(first.decision.sessionId)}` })
+  assert.equal(back.kind, 'reply')
+  if (back.kind !== 'reply') return
+  assert.match(back.text, /已切换/)
+  assert.equal(
+    Object.values(store.peek())[0]?.sessionId,
+    first.decision.sessionId,
+    'switching back makes it the bound session again',
   )
 })
 

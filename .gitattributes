@@ -1,0 +1,16 @@
+# One line ending in the repository, whatever the checkout platform does.
+#
+# Git warned on every file here about LF becoming CRLF, because the repository had no rule and the
+# working copy is on Windows. Left alone, that rewrites every line of every file on the first checkout
+# elsewhere, which buries real changes in noise. `text=auto` normalises into the repository and
+# `eol=lf` keeps the working copy consistent for the tools that read these files as text.
+* text=auto eol=lf
+
+# Tarballs are packed here and installed from a path, so a line-ending rewrite would change their
+# bytes and invalidate the checksum a lockfile records.
+*.tgz -text
+
+# Binary test fixtures must never be normalised.
+*.png -text
+*.jpg -text
+*.zstd -text

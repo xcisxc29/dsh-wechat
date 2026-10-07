@@ -75,20 +75,6 @@ export interface SessionGateway {
 export interface BindingStore {
   load(): Promise<Record<string, SessionBinding>>
   save(bindings: Record<string, SessionBinding>): Promise<void>
-  /**
-   * Record that a session belongs to a conversation.
-   *
-   * Separate from `bindings`, which only holds where a conversation is *now*. `/new` moves a
-   * conversation to a later session, and without this the earlier session could no longer be
-   * traced back to its conversation — so a tool called from it, including `send_to_wechat`, would
-   * fail precisely when the user switched back.
-   *
-   * Optional so a test store that only cares about routing stays small.
-   *
-   * @param sessionId - Session that became active.
-   * @param conversationId - Conversation it belongs to.
-   */
-  rememberOwner?(sessionId: string, conversationId: string): Promise<void>
 }
 
 export interface SessionRouterOptions {
@@ -148,9 +134,6 @@ export class SessionRouter {
 
     binding.lastUsedAt = Date.now()
     await this.#store.save(bindings)
-    // Recorded on every turn, not just on creation, so a session adopted before this field existed
-    // gains its owner the first time it is used.
-    await this.#store.rememberOwner?.(binding.sessionId, params.conversationId)
 
     return {
       kind: 'prompt',
@@ -236,7 +219,6 @@ export class SessionRouter {
         }
         bindings[params.conversationId] = binding
         await this.#store.save(bindings)
-        await this.#store.rememberOwner?.(binding.sessionId, params.conversationId)
         return { kind: 'reply', text: `已切换到「${binding.title}」。\n${shortId(binding.sessionId)}` }
       }
 
@@ -282,7 +264,6 @@ export class SessionRouter {
     }
     bindings[params.conversationId] = binding
     await this.#store.save(bindings)
-    await this.#store.rememberOwner?.(sessionId, params.conversationId)
     return binding
   }
 

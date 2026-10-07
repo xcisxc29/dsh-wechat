@@ -26,7 +26,6 @@ function emptyState(): ChannelState {
     syncBufs: {},
     contextTokens: {},
     bindings: {},
-    sessionOwners: {},
     sentMessages: {},
   }
 }

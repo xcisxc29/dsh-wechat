@@ -286,7 +286,6 @@ const EMPTY_STATE: ChannelState = {
   syncBufs: {},
   contextTokens: {},
   bindings: {},
-  sessionOwners: {},
   sentMessages: {},
 }
 
@@ -533,11 +532,6 @@ class WechatRuntime {
       save: async (next: Record<string, SessionBinding>) => {
         await this.#store.update((state) => {
           state.bindings = next
-        })
-      },
-      rememberOwner: async (sessionId: string, conversationId: string) => {
-        await this.#store.update((state) => {
-          state.sessionOwners[sessionId] = conversationId
         })
       },
     }
