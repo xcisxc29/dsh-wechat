@@ -1,6 +1,6 @@
 {
   "name": "dsh-wechat-plugin",
-  "version": "0.35.1",
+  "version": "0.35.2",
   "type": "module",
   "description": "WeChat channel for DeepSeek Harness: lock the PC, walk away, and drive the agent from your phone. No OpenClaw and no public IP required.",
   "keywords": [

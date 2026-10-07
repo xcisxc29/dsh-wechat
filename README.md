@@ -9,6 +9,10 @@ work.
 
 No OpenClaw, and no public IP required.
 
+**Runs on the current DSH desktop app** — developed and tested against DSH `0.2.0-rc.2`, and kept
+current as the desktop app moves on. A lot of community plugins quietly stopped working when DSH
+updated; this one is maintained alongside it, and every change is released through CI.
+
 [中文说明](README.zh.md)
 
 ## Features
@@ -24,7 +28,9 @@ No OpenClaw, and no public IP required.
 
 ## Install
 
-Requires DSH with a workspace and tool service — the standard desktop composition.
+**For the DSH desktop app.** It needs DSH's workspace, tool and UI services — the standard desktop
+composition — on a machine that stays on. Tested against `0.2.0-rc.2`, and updated alongside the
+desktop app.
 
 Open the **plugin** entry in the sidebar and choose **添加插件** (add plugin). The field takes a package
 name, a Git URL, a tarball, or a local path.
@@ -42,7 +48,7 @@ name, a Git URL, a tarball, or a local path.
 dsh-wechat-plugin
 ```
 
-Add a version if you need one: `dsh-wechat-plugin@0.35.1`.
+Add a version if you need one: `dsh-wechat-plugin@0.35.2`.
 </details>
 
 <details>
