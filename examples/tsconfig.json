@@ -1,0 +1,4 @@
+{
+  "extends": "../tsconfig.base.json",
+  "include": ["**/*.ts", "../packages/core/src/qrcode.d.ts"]
+}

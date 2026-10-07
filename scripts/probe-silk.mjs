@@ -9,9 +9,15 @@
  *
  * Usage:
  *   node scripts/probe-silk.mjs
+ *
+ * Needs `silk-wasm` reachable from somewhere on the resolution path. It is not a dependency of this
+ * repository — it is installed into whichever profile wants voice — so the probe looks in the
+ * profile, then the workspace, and reports what it found rather than naming one machine's path.
  */
 
+import { existsSync } from 'node:fs'
 import { createRequire } from 'node:module'
+import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
@@ -19,7 +25,27 @@ const repoRoot = dirname(dirname(fileURLToPath(import.meta.url)))
 const core = pathToFileURL(join(repoRoot, 'packages/core/lib/index.js')).href
 const { silkToWav, pcmToWav, silkAvailable, SILK_SAMPLE_RATE } = await import(core)
 
-const silk = createRequire('C:/Users/XCISXC/.dsh/profiles/desktop/package.json')('silk-wasm')
+const home = process.env.DSH_HOME ?? join(homedir(), '.dsh')
+const anchors = [
+  process.env.DSH_PROFILE ?? join(home, 'profiles', 'desktop'),
+  repoRoot,
+].filter((dir) => existsSync(join(dir, 'package.json')))
+
+let silk
+const tried = []
+for (const anchor of anchors) {
+  try {
+    silk = createRequire(join(anchor, 'package.json'))('silk-wasm')
+    break
+  } catch {
+    tried.push(anchor)
+  }
+}
+if (silk === undefined) {
+  console.error(`silk-wasm 未找到，已尝试: ${tried.join(', ')}`)
+  console.error('装它: dsh plugin --profile desktop add silk-wasm')
+  process.exit(1)
+}
 
 console.log(`silk-wasm 可用: ${String(silkAvailable())}   采样率: ${String(SILK_SAMPLE_RATE)}`)
 

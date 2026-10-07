@@ -21,6 +21,18 @@ const here = dirname(fileURLToPath(import.meta.url))
 const clientPath = join(here, '..', 'client.js')
 
 /**
+ * The route prefix the page talks to the host on.
+ *
+ * Defined once because the same string appears in a stub route table for nearly every test: written
+ * out each time, a rename had to be applied in thirty-one places, and one missed occurrence reads as
+ * a page that fails to load rather than as a missing edit.
+ *
+ * It has to agree with the host's own registration, which the last test in this file checks against
+ * the client bundle's source rather than against this constant.
+ */
+const PREFIX = '/.dsh-wechat-plugin'
+
+/**
  * A React stand-in with working `useState` and a runnable `useEffect`.
  *
  * Effects are collected during render and executed by {@link Mounted.flushEffects},
@@ -200,7 +212,7 @@ async function loadClientBundle(options = {}) {
 
   assert.equal(registrations.length, 1, 'the bundle must register exactly one module')
   const registration = registrations[0]
-  assert.equal(registration.id, 'dsh-wechat')
+  assert.equal(registration.id, 'dsh-wechat-plugin')
   assert.equal(typeof registration.factory, 'function')
 
   const exported = registration.factory((request) => {
@@ -316,7 +328,7 @@ const LOGIN_RUNNING = {
 test('the client bundle exports the plugin shape under the expected name', async () => {
   const bundle = await loadClientBundle()
   try {
-    assert.equal(bundle.exports.name, 'dsh-wechat')
+    assert.equal(bundle.exports.name, 'dsh-wechat-plugin')
     assert.equal(typeof bundle.exports.apply, 'function')
   } finally {
     bundle.restore()
@@ -387,14 +399,14 @@ test('apply registers its resources through effect and cleans them up', async ()
 
 test('the page loads every route it renders from', async () => {
   const { tree, requested, bundle } = await mountPage({
-    '/.dsh-wechat/status': STATUS,
-    '/.dsh-wechat/login': LOGIN_RUNNING,
-    '/.dsh-wechat/settings': { settings: SETTINGS, defaults: SETTINGS },
+    [PREFIX + '/status']: STATUS,
+    [PREFIX + '/login']: LOGIN_RUNNING,
+    [PREFIX + '/settings']: { settings: SETTINGS, defaults: SETTINGS },
   })
   try {
     assert.deepEqual(
       [...requested].sort(),
-      ['/.dsh-wechat/login', '/.dsh-wechat/settings', '/.dsh-wechat/status'],
+      [PREFIX + '/login', PREFIX + '/settings', PREFIX + '/status'],
       'the page must call exactly these routes',
     )
 
@@ -425,9 +437,9 @@ test('the page loads every route it renders from', async () => {
 
 test('disconnecting runs straight away, with no verification step', async () => {
   const { tree, bundle, requested } = await mountPage({
-    '/.dsh-wechat/status': STATUS,
-    '/.dsh-wechat/login': LOGIN_RUNNING,
-    '/.dsh-wechat/settings': { settings: SETTINGS, defaults: SETTINGS },
+    [PREFIX + '/status']: STATUS,
+    [PREFIX + '/login']: LOGIN_RUNNING,
+    [PREFIX + '/settings']: { settings: SETTINGS, defaults: SETTINGS },
   })
   try {
     const button = collectByType(tree, 'button').find((node) =>
@@ -438,7 +450,7 @@ test('disconnecting runs straight away, with no verification step', async () => 
     // Security was removed deliberately, so the action is unguarded. Asserted rather than left
     // implicit: re-adding a prompt would otherwise go unnoticed.
     assert.ok(
-      requested.includes('/.dsh-wechat/disconnect'),
+      requested.includes(PREFIX + '/disconnect'),
       'the request goes out without a password',
     )
   } finally {
@@ -448,9 +460,9 @@ test('disconnecting runs straight away, with no verification step', async () => 
 
 test('the page has no password or security-question UI at all', async () => {
   const { tree, bundle } = await mountPage({
-    '/.dsh-wechat/status': STATUS,
-    '/.dsh-wechat/login': LOGIN_RUNNING,
-    '/.dsh-wechat/settings': { settings: SETTINGS, defaults: SETTINGS },
+    [PREFIX + '/status']: STATUS,
+    [PREFIX + '/login']: LOGIN_RUNNING,
+    [PREFIX + '/settings']: { settings: SETTINGS, defaults: SETTINGS },
   })
   try {
     const text = collectText(tree).join(' | ')
@@ -469,9 +481,9 @@ test('the page has no password or security-question UI at all', async () => {
 
 test('the page groups its settings, so unlike decisions are told apart', async () => {
   const { tree, bundle } = await mountPage({
-    '/.dsh-wechat/status': STATUS,
-    '/.dsh-wechat/login': LOGIN_RUNNING,
-    '/.dsh-wechat/settings': { settings: SETTINGS, defaults: SETTINGS },
+    [PREFIX + '/status']: STATUS,
+    [PREFIX + '/login']: LOGIN_RUNNING,
+    [PREFIX + '/settings']: { settings: SETTINGS, defaults: SETTINGS },
   })
   try {
     // Unrelated settings sitting side by side with nothing to say they were different kinds of
@@ -506,9 +518,9 @@ test('the page groups its settings, so unlike decisions are told apart', async (
 
 test('the page carries no inline layout styles, so the stylesheet stays the one source', async () => {
   const { tree, bundle } = await mountPage({
-    '/.dsh-wechat/status': STATUS,
-    '/.dsh-wechat/login': LOGIN_RUNNING,
-    '/.dsh-wechat/settings': { settings: SETTINGS, defaults: SETTINGS },
+    [PREFIX + '/status']: STATUS,
+    [PREFIX + '/login']: LOGIN_RUNNING,
+    [PREFIX + '/settings']: { settings: SETTINGS, defaults: SETTINGS },
   })
   try {
     // Layout written inline wins over the stylesheet and cannot be restyled or themed, which is
@@ -533,9 +545,9 @@ test('the page carries no inline layout styles, so the stylesheet stays the one 
 
 test('the diagnostics paths are a definition list, so their labels line up', async () => {
   const { tree, bundle } = await mountPage({
-    '/.dsh-wechat/status': STATUS,
-    '/.dsh-wechat/login': LOGIN_RUNNING,
-    '/.dsh-wechat/settings': { settings: SETTINGS, defaults: SETTINGS },
+    [PREFIX + '/status']: STATUS,
+    [PREFIX + '/login']: LOGIN_RUNNING,
+    [PREFIX + '/settings']: { settings: SETTINGS, defaults: SETTINGS },
   })
   try {
     // Selector by class rather than by count: the page holds more than one definition list now
@@ -551,9 +563,9 @@ test('the diagnostics paths are a definition list, so their labels line up', asy
 
 test('the command reference lists every command with what it does', async () => {
   const { tree, bundle } = await mountPage({
-    '/.dsh-wechat/status': STATUS,
-    '/.dsh-wechat/login': LOGIN_RUNNING,
-    '/.dsh-wechat/settings': { settings: SETTINGS, defaults: SETTINGS },
+    [PREFIX + '/status']: STATUS,
+    [PREFIX + '/login']: LOGIN_RUNNING,
+    [PREFIX + '/settings']: { settings: SETTINGS, defaults: SETTINGS },
   })
   try {
     const commands = collectByClass(tree, 'dsh-wechat-command')
@@ -573,9 +585,9 @@ test('the command reference lists every command with what it does', async () => 
 test('the page asks for a verification code only when the host says so', async () => {
   const waiting = { phase: 'running', step: '服务端要求输入配对验证码', awaitingVerifyCode: true }
   const { tree, bundle } = await mountPage({
-    '/.dsh-wechat/status': STATUS,
-    '/.dsh-wechat/login': waiting,
-    '/.dsh-wechat/bindings': { bindings: [] },
+    [PREFIX + '/status']: STATUS,
+    [PREFIX + '/login']: waiting,
+    [PREFIX + '/bindings']: { bindings: [] },
   })
   try {
     const inputs = collectByType(tree, 'input')
@@ -597,7 +609,7 @@ test('the page asks for a verification code only when the host says so', async (
 test('a failing status route renders an error instead of throwing', async () => {
   const { tree, bundle } = await mountPage({
     // Status is the one the page cannot render without, so its absence is fatal.
-    '/.dsh-wechat/login': LOGIN_RUNNING,
+    [PREFIX + '/login']: LOGIN_RUNNING,
   })
   try {
     const text = collectText(tree).join(' | ')
@@ -613,8 +625,8 @@ test('a failing optional route degrades instead of blanking the page', async () 
   // The settings route is the most optional. A page that refused to render because it 404s would
   // take the channel switch down with it, so the core sections must still appear.
   const { tree, bundle } = await mountPage({
-    '/.dsh-wechat/status': STATUS,
-    '/.dsh-wechat/login': LOGIN_RUNNING,
+    [PREFIX + '/status']: STATUS,
+    [PREFIX + '/login']: LOGIN_RUNNING,
     // settings is absent, so it 404s.
   })
   try {
@@ -656,4 +668,41 @@ test('the client half is declared immediately, because nothing consumes it', asy
     'without this the desktop shell fails to start: the entry never activates',
   )
   assert.equal(manifest.dsh.client.inject, undefined, 'nothing else consumes this plugin')
+})
+
+test('the package name, the host row id and the client module id agree', async () => {
+  /*
+   * Three places carry this plugin's identity, and the shipped bundles keep them identical: the
+   * package name, the `id` of the row `cordis.patch.yml` inserts, and the `id` the client registers
+   * itself under. The client-plugin convention depends on it — a Host row whose id differs from its
+   * package name cannot be loaded by name.
+   *
+   * One of the three was missed when the package was renamed (`dsh-wechat` was already taken on npm by
+   * an unrelated plugin of the same purpose), and nothing failed: the host half still loaded, so only
+   * the settings page went blank. Hence this test.
+   */
+  const manifest = JSON.parse(await readFile(join(here, '..', 'package.json'), 'utf8'))
+  const patch = await readFile(join(here, '..', 'cordis.patch.yml'), 'utf8')
+  const client = await readFile(clientPath, 'utf8')
+
+  const name = manifest.name
+  const rowId = /- id:\s*(\S+)/.exec(patch)?.[1]
+  const rowName = /name:\s*'([^']+)'/.exec(patch)?.[1]
+  const moduleId = /__ModuleLoader__\.load\(\{\s*id:\s*'([^']+)'/.exec(client)?.[1]
+
+  assert.equal(rowId, name, 'the cordis row id must equal the package name')
+  assert.equal(rowName, name, 'the cordis row name must equal the package name')
+  assert.equal(moduleId, name, 'the client module id must equal the package name')
+})
+
+test('the page and the host agree on the route prefix', async () => {
+  // The page calls routes; the host registers them. If the two strings drift, every request 404s and
+  // the settings page renders empty — with no error anywhere, because a 404 is a valid response.
+  const hostSource = await readFile(join(here, '..', 'src', 'host.ts'), 'utf8')
+  const registered = /path:\s*'([^']+)'/.exec(hostSource)?.[1]
+  assert.equal(
+    registered,
+    PREFIX,
+    'the host route prefix and the page\'s PREFIX constant must be the same string',
+  )
 })

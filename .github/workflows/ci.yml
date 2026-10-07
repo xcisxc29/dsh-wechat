@@ -1,0 +1,75 @@
+# What has to hold before a change is considered good: it builds, it type-checks, every test passes,
+# and the tarball it would publish actually loads.
+#
+# The last one is the reason this file exists. Every other check runs against the repository, where
+# `@dsh-wechat/core` resolves through a workspace link and every optional codec happens to be present.
+# An install does not look like that: core is vendored, `sharp` is absent, and a missing entry in the
+# manifest's `files` silently drops a directory that an import points at. Each of those has broken a
+# release here, and none of them is visible from inside the checkout.
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    strategy:
+      fail-fast: false
+      matrix:
+        # Both ends of the supported range. A single version would leave `engines` unchecked, and the
+        # TypeScript stripping this project relies on is exactly the kind of thing that shifts between
+        # Node releases.
+        os: [ubuntu-latest, windows-latest]
+        node: ['22.19', '24']
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        # The version comes from `packageManager` in package.json, so there is one place to bump.
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: pnpm
+
+      # `--frozen-lockfile` is the point: a lockfile that does not match the manifests should fail
+      # here rather than resolve something new on a machine nobody is watching.
+      - run: pnpm install --frozen-lockfile
+
+      - run: pnpm build
+
+      - run: pnpm typecheck
+
+      - run: pnpm test
+
+      # Packing and then mounting the result is what catches a package that installs cleanly and
+      # fails to load — the failure mode this project has hit most often.
+      #
+      # `pnpm run pack`, not `pnpm pack`: the latter is pnpm's own command, which looks for a `version`
+      # in the workspace root's manifest and fails with ERR_PNPM_PACKAGE_VERSION_NOT_FOUND, because
+      # that manifest is private. `pnpm test` happens to work only because pnpm has no built-in `test`.
+      - run: pnpm run pack
+
+      - run: pnpm run verify-pack
+
+      - name: Confirm the tarball carries its documentation
+        shell: bash
+        run: |
+          set -euo pipefail
+          tarball=$(ls dsh-wechat-plugin-*.tgz | sort | tail -n1)
+          for required in package/README.md package/LICENSE package/cordis.patch.yml; do
+            tar -tzf "$tarball" | grep -qx "$required" || {
+              echo "the tarball is missing $required"
+              tar -tzf "$tarball"
+              exit 1
+            }
+          done
+          echo "$tarball carries README, LICENSE and the patch file."

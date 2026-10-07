@@ -43,6 +43,34 @@ type SharpFactory = (input: Buffer) => SharpPipeline
 
 let cached: SharpFactory | null | undefined
 
+/** Whether optional codecs are disabled for this process. See {@link codecsDisabled}. */
+const DISABLE_ENV = 'DSH_WECHAT_NO_CODECS'
+
+/**
+ * Whether the optional codecs are switched off by configuration.
+ *
+ * `sharp` and `silk-wasm` are resolved at runtime, and neither is a dependency of this package — a
+ * fresh install has `sharp` only because the application ships it, and `silk-wasm` at all only if
+ * someone installed it. The paths that handle their absence are therefore the common path, and this
+ * switch makes them reachable on a machine where the codec *is* present: without it those paths can
+ * only be reasoned about, never executed, and a regression that made a missing codec throw would
+ * pass every test and break for every new user.
+ *
+ * Set `DSH_WECHAT_NO_CODECS=1` to force both codecs unavailable. It is also the quick way to confirm
+ * which behaviour a stripped deployment will get.
+ *
+ * @returns True when the codecs must report themselves unavailable.
+ */
+export function codecsDisabled(): boolean {
+  const value = process.env[DISABLE_ENV]
+  return value === '1' || value === 'true'
+}
+
+/** Drop the memoised encoder, so a test can re-resolve under a changed environment. */
+export function forgetCodecCache(): void {
+  cached = undefined
+}
+
 /**
  * Load `sharp`, or report that it is unavailable.
  *
@@ -57,6 +85,10 @@ let cached: SharpFactory | null | undefined
  */
 async function loadSharp(): Promise<SharpFactory | null> {
   if (cached !== undefined) return cached
+  if (codecsDisabled()) {
+    cached = null
+    return cached
+  }
   try {
     cached = resolveSharp()
   } catch {

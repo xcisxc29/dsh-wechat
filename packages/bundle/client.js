@@ -17,7 +17,7 @@
  * registration has already happened.
  */
 
-const PREFIX = '/.dsh-wechat'
+const PREFIX = '/.dsh-wechat-plugin'
 
 /** Report a client-side failure to the host, which writes it to the boot log. */
 function reportFailure(scope, error) {
@@ -44,7 +44,7 @@ function reportFailure(scope, error) {
 }
 
 window.__ModuleLoader__.load({
-  id: 'dsh-wechat',
+  id: 'dsh-wechat-plugin',
   factory: (require) => {
     /**
      * Whether this plugin's settings section has rendered at least once.
@@ -1055,7 +1055,7 @@ window.__ModuleLoader__.load({
     }
 
     /** Cordis plugin name. The loader patch id must match this. */
-    const name = 'dsh-wechat'
+    const name = 'dsh-wechat-plugin'
 
     /**
      * Client services this plugin needs before it may activate.

@@ -33,10 +33,11 @@ async function removeHome(home: string): Promise<void> {
 }
 
 test('the workspace folder name matches what the store actually writes', () => {
-  // Observed verbatim at ~/.dsh/sessions/--C-Users-XCISXC-.dsh-dsh_wechat--.
+  // The shape observed on disk, with the account name replaced by a placeholder:
+  // ~/.dsh/sessions/--C-Users-me-.dsh-dsh_wechat--. The rule is what matters, not whose account it was.
   assert.equal(
-    encodeWorkspaceDir('C:\\Users\\XCISXC\\.dsh\\dsh_wechat'),
-    '--C-Users-XCISXC-.dsh-dsh_wechat--',
+    encodeWorkspaceDir('C:\\Users\\me\\.dsh\\dsh_wechat'),
+    '--C-Users-me-.dsh-dsh_wechat--',
   )
   // Runs of separators collapse: `C:` and the `\` after it share one dash, not two.
   assert.equal(encodeWorkspaceDir('C:\\a\\b'), '--C-a-b--')

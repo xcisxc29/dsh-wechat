@@ -15,7 +15,7 @@
 # channel on from Settings; the choice is persisted in the channel's own state file.
 
 - insert:
-    - id: dsh-wechat
-      name: 'dsh-wechat'
+    - id: dsh-wechat-plugin
+      name: 'dsh-wechat-plugin'
       config:
         autoStart: true

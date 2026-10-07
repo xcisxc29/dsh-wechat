@@ -13,8 +13,9 @@
  */
 
 import { spawnSync } from 'node:child_process'
-import { cp, mkdir, readdir, rm, stat } from 'node:fs/promises'
+import { cp, mkdir, readdir, readFile, rm, stat } from 'node:fs/promises'
 import { existsSync } from 'node:fs'
+import { createRequire } from 'node:module'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
@@ -22,10 +23,20 @@ const here = dirname(fileURLToPath(import.meta.url))
 const repoRoot = resolve(here, '..')
 
 const explicit = process.argv[2]
+const bundleManifest = JSON.parse(
+  await (await import('node:fs/promises')).readFile(join(repoRoot, 'packages/bundle/package.json'), 'utf8'),
+)
+/*
+ * Derived from the manifest rather than written here.
+ *
+ * The package was renamed once already (`dsh-wechat` was taken on npm by an unrelated plugin of the
+ * same purpose), and a hardcoded name here would have gone on checking the old tarball while
+ * reporting success.
+ */
 const tarball =
   explicit ??
   (await readdir(repoRoot))
-    .filter((name) => name.startsWith('dsh-wechat-') && name.endsWith('.tgz'))
+    .filter((name) => name.startsWith(`${bundleManifest.name}-`) && name.endsWith('.tgz'))
     .sort()
     .at(-1)
 
@@ -77,17 +88,53 @@ if (!entryRelative.endsWith('.js')) {
   process.exit(1)
 }
 
-// An installed bundle gets `qrcode` from the registry. Reuse the workspace copy so
-// the check stays offline and still exercises real module resolution.
-const workspaceModules = join(repoRoot, 'node_modules')
-if (!existsSync(join(workspaceModules, 'qrcode'))) {
-  console.error('工作区没有 qrcode，请先运行 pnpm install')
+/*
+ * Give the extracted package the runtime dependencies an install would give it.
+ *
+ * Resolved with Node's own resolver from an anchor that can see them, rather than by copying the
+ * workspace root's `node_modules`. That root does not necessarily hold anything: pnpm's hoisted
+ * layout puts a workspace package's dependencies under that package, so `qrcode` lives in
+ * `packages/core/node_modules` — and asking the root for it made this check fail with "run pnpm
+ * install" on a fully installed tree.
+ *
+ * Only the packages actually reachable from the dependency are copied, which is what npm would
+ * install: the lockfile has no say in the tarball's shape, so everything the bundle imports at runtime
+ * has to be present and resolvable by name.
+ */
+const anchor = join(repoRoot, 'packages', 'core', 'package.json')
+const copied = new Set()
+
+/**
+ * Copy one package and everything it depends on into the extracted bundle.
+ *
+ * @param specifier - Package name to place.
+ * @param from - Directory to resolve it from, so nested dependencies are found where they live.
+ */
+async function place(specifier, from) {
+  const resolve = createRequire(join(from, 'package.json'))
+  const manifestPath = resolve.resolve(`${specifier}/package.json`)
+  const source = dirname(manifestPath)
+  const name = JSON.parse(await readFile(manifestPath, 'utf8')).name ?? specifier
+  if (copied.has(name)) return
+  copied.add(name)
+
+  await cp(source, join(pkgDir, 'node_modules', name), { recursive: true })
+  const manifest = JSON.parse(await readFile(manifestPath, 'utf8'))
+  for (const dependency of Object.keys(manifest.dependencies ?? {})) {
+    await place(dependency, source)
+  }
+}
+
+const runtimeDependencies = Object.keys(manifest.dependencies ?? {})
+if (runtimeDependencies.length === 0) {
+  console.error('清单没有运行时依赖：打包步骤可能误删了 dependencies')
   process.exit(1)
 }
-await cp(workspaceModules, join(pkgDir, 'node_modules'), {
-  recursive: true,
-  filter: (source) => !source.includes('.pnpm'),
-})
+await mkdir(join(pkgDir, 'node_modules'), { recursive: true })
+for (const dependency of runtimeDependencies) {
+  await place(dependency, dirname(anchor))
+}
+console.log(`已就位依赖: ${[...copied].sort().join(', ')}`)
 
 const entry = pathToFileURL(join(pkgDir, manifest.exports['.'].default ?? manifest.exports['.'])).href
 const plugin = await import(entry)

@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Pack `dsh-wechat` into a single installable tarball.
+ * Pack `dsh-wechat-plugin` into a single installable tarball.
  *
  * The bundle has to be self-contained. DSH's loader resolves plugin names from the
  * profile root, so sub-packages nested under this package's own `node_modules` are
@@ -18,7 +18,7 @@
  *     and an installed bundle must never pin a second copy of a host package.
  *
  * Usage:
- *   node scripts/pack.mjs            # writes dsh-wechat-<version>.tgz in the repo root
+ *   node scripts/pack.mjs            # writes <name>-<version>.tgz in the repo root
  *   node scripts/pack.mjs --out DIR  # write somewhere else
  */
 
@@ -91,10 +91,23 @@ try {
   if (rewritten.length === 0) {
     throw new Error('打包未重写任何 @dsh-wechat/core 引用：宿主产物可能不是预期的形态')
   }
-  for (const required of ['lib/host.js', 'client.js', 'cordis.patch.yml', 'dist/core/lib/index.js']) {
-    if (!existsSync(join(pkgDir, required))) {
-      throw new Error(`打包缺少必需文件: ${required}`)
-    }
+
+  /*
+   * Documentation travels with the package.
+   *
+   * npm includes a README and a LICENSE only when they sit inside the package directory, and this
+   * package's directory is `packages/bundle` while the documents live at the repository root. So the
+   * tarball shipped with neither: no install instructions, and no licence — while the manifest
+   * declared MIT.
+   *
+   * They also have to be named in `files`. npm decides what ships from that list and makes no
+   * exception for a README that happens to be in the directory, which is how the first attempt at
+   * this fix copied the file in and still packed a tarball without it.
+   */
+  for (const doc of ['README.md', 'LICENSE']) {
+    const source = join(repoRoot, doc)
+    if (!existsSync(source)) throw new Error(`打包缺少仓库根文档: ${doc}`)
+    await cp(source, join(pkgDir, doc))
   }
 
   // A packed bundle carries no devDependencies and no workspace protocols.
@@ -109,7 +122,34 @@ try {
   }
   // The vendored core lands in `dist/core`, so it must be in the file list. Leaving
   // it out makes `npm pack` silently drop the directory the rewritten imports point at.
-  manifest.files = [...new Set([...(manifest.files ?? []), 'src', 'dist', 'client.js', 'cordis.patch.yml'])]
+  manifest.files = [
+    ...new Set([
+      ...(manifest.files ?? []),
+      'src',
+      'dist',
+      'client.js',
+      'cordis.patch.yml',
+      'README.md',
+      'LICENSE',
+    ]),
+  ]
+
+  // Everything the package must carry, checked once the directory is complete. Placed last on
+  // purpose: an earlier version asserted before copying the documents and failed on a file it was
+  // about to write.
+  for (const required of [
+    'lib/host.js',
+    'client.js',
+    'cordis.patch.yml',
+    'dist/core/lib/index.js',
+    'README.md',
+    'LICENSE',
+  ]) {
+    if (!existsSync(join(pkgDir, required))) {
+      throw new Error(`打包缺少必需文件: ${required}`)
+    }
+  }
+
   await writeFile(join(pkgDir, 'package.json'), `${JSON.stringify(manifest, null, 2)}\n`)
 
   await mkdir(outDir, { recursive: true })

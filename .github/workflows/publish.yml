@@ -1,0 +1,85 @@
+# Publish to npm when a version tag is pushed.
+#
+#   git tag v0.33.0 && git push origin v0.33.0
+#
+# A tag rather than a merge: publishing is the one action here that cannot be undone — an npm version
+# can be deprecated but never re-used — so it is deliberate, and the tag says which version it was.
+#
+# Requires an `NPM_TOKEN` repository secret: an npm *automation* token (npmjs.com → Access Tokens →
+# Generate New Token → Automation), which bypasses 2FA. A classic publish token would fail here,
+# because nothing can answer a one-time-password prompt in CI.
+
+name: Publish
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      dry-run:
+        description: 'Pack and check without publishing'
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+  # Required for `--provenance`, which signs the tarball with the workflow's identity so npm can show
+  # where a package came from. Without it, a published package is an unattributable file.
+  id-token: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: pnpm
+          registry-url: 'https://registry.npmjs.org'
+
+      - run: pnpm install --frozen-lockfile
+
+      # The same gate as CI. Publishing an artifact that has not been verified turns a broken release
+      # into a published one, and npm will not let the version be reused.
+      - run: pnpm run build
+      - run: pnpm run typecheck
+      - run: pnpm test
+      - run: pnpm run pack
+      - run: pnpm run verify-pack
+
+      - name: Check the tag matches the manifest
+        shell: bash
+        run: |
+          set -euo pipefail
+          manifest=$(node -p "require('./packages/bundle/package.json').version")
+          tag="${GITHUB_REF_NAME#v}"
+          if [ "$manifest" != "$tag" ]; then
+            echo "tag $GITHUB_REF_NAME does not match package version $manifest"
+            echo "bump packages/bundle/package.json, commit, then tag again"
+            exit 1
+          fi
+          echo "tag and manifest agree on $manifest"
+
+      - name: Publish
+        shell: bash
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ inputs.dry-run }}" = "true" ]; then
+            echo "dry run: everything above passed, skipping the publish"
+            exit 0
+          fi
+          if [ -z "${NODE_AUTH_TOKEN:-}" ]; then
+            echo "NPM_TOKEN is not set. Add it under Settings → Secrets and variables → Actions."
+            exit 1
+          fi
+          # `pnpm run pack` produced the tarball; publish that exact file rather than letting npm pack
+          # a second time, so what is published is what was verified.
+          tarball=$(ls dsh-wechat-plugin-*.tgz | sort | tail -n1)
+          echo "publishing $tarball"
+          npm publish "$tarball" --provenance --access public

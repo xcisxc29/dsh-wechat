@@ -6,32 +6,43 @@
  * would look in this repository's `node_modules` instead.
  *
  * Usage:
- *   node scripts/probe-installed.mjs [profileDir]
+ *   node scripts/probe-installed.mjs [profileDir] [packageName]
+ *
+ * Defaults: `$DSH_HOME/profiles/desktop` and `dsh-wechat-plugin`.
  */
 import { readFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
+import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 
-const profileDir = process.argv[2] ?? 'C:/Users/XCISXC/.dsh/profiles/desktop'
+/*
+ * Defaults come from the environment, not from whoever wrote this.
+ *
+ * The path used to be an absolute one from the author's machine, which made the script a record of
+ * one person's setup rather than a tool anyone can run.
+ */
+const home = process.env.DSH_HOME ?? join(homedir(), '.dsh')
+const profileDir = process.argv[2] ?? join(home, 'profiles', 'desktop')
+const packageName = process.argv[3] ?? 'dsh-wechat-plugin'
 const require = createRequire(pathToFileURL(join(profileDir, 'package.json')).href)
 
-const manifestPath = require.resolve('dsh-wechat/package.json')
+const manifestPath = require.resolve(`${packageName}/package.json`)
 const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'))
 console.log(`profile     : ${profileDir}`)
 console.log(`已解析      : ${manifest.name}@${manifest.version}`)
 console.log(`入口        : ${manifest.exports['.'].default}`)
 
 // Load by absolute path. The profile's own resolution is what matters here, and an
-// ESM `import('dsh-wechat')` from this script would resolve against this repository.
+// ESM `import('dsh-wechat-plugin')` from this script would resolve against this repository.
 const packageRoot = dirname(manifestPath)
 const entryPath = join(packageRoot, manifest.exports['.'].default)
 const plugin = await import(pathToFileURL(entryPath).href)
 console.log(`import 成功 : name=${plugin.name} apply=${typeof plugin.apply} inject=${JSON.stringify(plugin.inject)}`)
 
-const clientPath = require.resolve('dsh-wechat/client')
+const clientPath = require.resolve(`${packageName}/client`)
 const client = readFileSync(clientPath, 'utf8')
-const registers = client.includes("id: 'dsh-wechat'") || client.includes('id: "dsh-wechat"')
+const registers = client.includes(`id: '${packageName}'`) || client.includes(`id: "${packageName}"`)
 console.log(`client 包   : ${clientPath}`)
 console.log(`注册 id 匹配: ${registers}`)
 

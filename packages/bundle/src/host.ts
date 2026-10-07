@@ -5,7 +5,7 @@
  * into DSH sessions, and forwards assistant output back to the chat. All protocol
  * work lives in `@dsh-wechat/core`; this file is the glue to the host.
  *
- * @module dsh-wechat/host
+ * @module dsh-wechat-plugin/host
  */
 
 import { randomUUID } from 'node:crypto'
@@ -89,7 +89,7 @@ import {
 } from './services.ts'
 
 /** Cordis plugin name. */
-export const name = 'dsh-wechat'
+export const name = 'dsh-wechat-plugin'
 
 /** Host services this plugin reads. A missing one keeps the plugin pending. */
 export const inject = ['sessionController', 'sessions', 'workspaceRegistry', 'tools']
@@ -1548,15 +1548,16 @@ class WechatRuntime {
   /**
    * The conversation a session may speak for.
    *
-   * Only the session a conversation is **currently** bound to may act on its behalf. `sessionOwners`
-   * is deliberately *not* consulted: it remembers every session a conversation has ever used, so
-   * treating it as permission leaves a conversation's former session able to send messages for the
-   * rest of time.
+   * Only the session a conversation is **currently** bound to may act on its behalf.
    *
-   * That is not hypothetical. After `/new`, the development session this plugin was written in stayed
-   * an owner of the WeChat conversation, so a question asked from it — through a different harness
-   * session entirely — arrived on the user's phone. Any contact whose conversation had once pointed
-   * at a session could keep driving it.
+   * This used to also accept any session a conversation had ever used, through a `sessionOwners`
+   * map. That map is gone, and the reason is worth keeping: it made a conversation's *former*
+   * session able to send messages, ask questions and switch sessions for the rest of time. After
+   * `/new`, the development session this plugin was written in stayed an owner of the WeChat
+   * conversation, so a question asked from it — through a different harness session entirely —
+   * arrived on the user's phone.
+   *
+   * A bookkeeping trail is not a grant of authority, and the two were the same map.
    *
    * @param sessionId - Session to look up, if known.
    * @returns The conversation key, when this session is the one bound to it.
@@ -2503,7 +2504,7 @@ class WechatRuntime {
   #recordError(message: string): void {
     this.#errors.push(`${new Date().toISOString()} ${message}`)
     if (this.#errors.length > 50) this.#errors.shift()
-    console.error(`dsh-wechat: ${message}`)
+    console.error(`dsh-wechat-plugin: ${message}`)
   }
 
   /**
@@ -2775,7 +2776,7 @@ export function apply(
       home,
       stateFile: paths.stateFile,
       workspace: paths.workspace,
-      botAgent: config.botAgent ?? 'dsh-wechat/0.0.0',
+      botAgent: config.botAgent ?? 'dsh-wechat-plugin/0.0.0',
       ...(internals.send === undefined ? {} : { send: internals.send }),
     })
     // The settings surface reaches the runtime through this service.
@@ -2848,7 +2849,7 @@ export function apply(
     })
 
     bootLog(home, 'apply: mounted')
-    console.error('dsh-wechat: channel mounted')
+    console.error('dsh-wechat-plugin: channel mounted')
   } catch (error) {
     // Record before rethrowing: the desktop shell shows this failure once, in a
     // dialog it never writes to disk, so otherwise nothing survives to inspect.
@@ -2920,13 +2921,13 @@ function registerRoutes(ctx: WechatContext, runtime: WechatRuntime): () => void 
       }
     | undefined
   if (webServer === undefined) {
-    console.error('dsh-wechat: no webServer, settings routes unavailable')
+    console.error('dsh-wechat-plugin: no webServer, settings routes unavailable')
     return () => {}
   }
 
   return webServer.register({
     kind: 'prefix',
-    path: '/.dsh-wechat',
+    path: '/.dsh-wechat-plugin',
     handler: async (req, res) => {
       const url = new URL(req.url ?? '/', 'http://localhost')
       const route = url.pathname

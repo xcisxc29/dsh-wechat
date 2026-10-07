@@ -17,6 +17,8 @@ import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
+import { codecsDisabled } from './thumbnail.ts'
+
 /** Sample rate WeChat records voice at, and the rate the decoder must be told to emit. */
 export const SILK_SAMPLE_RATE = 24_000
 
@@ -65,6 +67,11 @@ function resolveSilk(): SilkModule {
 /** Whether voice can be transcoded in this deployment. */
 export function silkAvailable(): boolean {
   if (cached === undefined) {
+    // The escape hatch lives with the other codec; see `codecsDisabled` for why it exists.
+    if (codecsDisabled()) {
+      cached = null
+      return false
+    }
     try {
       cached = resolveSilk()
     } catch {
@@ -72,6 +79,11 @@ export function silkAvailable(): boolean {
     }
   }
   return cached !== null
+}
+
+/** Drop the memoised codec, so a test can re-resolve under a changed environment. */
+export function forgetSilkCache(): void {
+  cached = undefined
 }
 
 /**
