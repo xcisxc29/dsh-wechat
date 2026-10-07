@@ -52,33 +52,15 @@ MIT) and verified against the live service:
 
 Requires DSH with a workspace and tool service — the standard desktop composition.
 
-### From the app
-
-Open the **plugin** entry in the sidebar, choose **添加插件** (add plugin), and enter:
-
-```
-dsh-wechat-plugin
-```
-
-The field accepts a package name with an optional version, a Git URL, a tarball, or a local absolute
-path — it is the same spec `dsh plugin add` takes. When the install finishes, use **立即启用** to turn
-the bundle on, then restart DSH.
-
-That is the whole install. The dialog also remembers which registry answered, and can fall back to
-npmmirror when GitHub or npm is unreachable.
-
-### From a terminal
-
-The app drives `pnpm` underneath, so the same thing headlessly:
+DSH ships a launcher for exactly this, and it is a thin wrapper over pnpm:
 
 ```bash
 dsh plugin --profile desktop add dsh-wechat-plugin
 ```
 
-Then make sure the bundle is enabled — this is what **立即启用** does for you:
+Then add it to the profile's bundles, in `~/.dsh/profiles/desktop/package.json`:
 
 ```json
-// ~/.dsh/profiles/desktop/package.json
 {
   "dsh": {
     "profile": {
@@ -92,23 +74,21 @@ Then make sure the bundle is enabled — this is what **立即启用** does for 
 }
 ```
 
+**Restart DSH.** Then open **Settings → WeChat**, click **重新扫码** (rescan), and scan the QR code
+with your phone. Send `你好` from WeChat and you should get a reply.
+
+> **This deployment has no plugin marketplace.** DSH's plugin settings page lists the plugins a
+> deployment ships and nothing else — there is no install button. `dsh plugin` is the only built-in
+> way in, which is why the steps above edit `package.json` by hand.
+
 ### From source
 
 ```bash
 pnpm install && pnpm build && pnpm run pack
 # → dsh-wechat-plugin-<version>.tgz
-```
 
-Then paste the absolute path to that `.tgz` into **添加插件**, or:
-
-```bash
 dsh plugin --profile desktop add /absolute/path/to/dsh-wechat-plugin-<version>.tgz
 ```
-
-### After installing
-
-**Restart DSH.** Open **Settings → WeChat**, click **重新扫码** (rescan), and scan the QR code with your
-phone. Send `你好` from WeChat and you should get a reply.
 
 ### Optional
 

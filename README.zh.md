@@ -64,32 +64,15 @@ node --experimental-transform-types examples/send-file.ts ./报告.md
 
 ## 安装与使用
 
-DSH 需要工作区与工具服务（桌面端的标准组合）。
-
-### 在应用里装（推荐）
-
-侧栏点**插件**，选**添加插件**，填：
-
-```
-dsh-wechat-plugin
-```
-
-这个输入框接受**包名（可带版本）、Git 地址、压缩包或本地绝对路径**——和 `dsh plugin add` 后面那一段是同一种写法。装完点**立即启用**把它打开，然后重启 DSH。
-
-**就这一步。** 对话框会记住哪个注册表应答，GitHub 或 npm 连不上时可以退回 npmmirror。
-
-### 在终端里装
-
-图形界面底层就是 pnpm，所以同一件事也可以这样：
+DSH 自带一个插件安装入口，它其实是 pnpm 的包装：
 
 ```bash
 dsh plugin --profile desktop add dsh-wechat-plugin
 ```
 
-此时要自己确认组合包是启用的——**立即启用**帮你做的就是这件事：
+然后把包名加进 profile 的 bundles（`~/.dsh/profiles/desktop/package.json`）：
 
 ```json
-// ~/.dsh/profiles/desktop/package.json
 {
   "dsh": {
     "profile": {
@@ -103,24 +86,23 @@ dsh plugin --profile desktop add dsh-wechat-plugin
 }
 ```
 
-### 从源码装
+**重启 DSH**，然后：
+
+1. 打开 **设置 → 微信**
+2. 点「开始扫码」，用手机微信扫屏幕上出现的二维码
+3. 手机上确认授权
+
+之后就可以在微信里直接和 DSH 对话了。
+
+**从源码安装**：
 
 ```bash
 pnpm install && pnpm build && pnpm run pack
 # 产出 dsh-wechat-plugin-<version>.tgz
-```
-
-把这个 `.tgz` 的**绝对路径**粘进**添加插件**，或者：
-
-```bash
 dsh plugin --profile desktop add /绝对路径/dsh-wechat-plugin-<version>.tgz
 ```
 
-### 装完之后
-
-**重启 DSH**，然后打开 **设置 → 微信**，点「重新扫码」，用手机微信扫出现的二维码，手机上确认授权。
-
-之后就可以在微信里直接和 DSH 对话了。
+> **这个 DSH 部署没有插件市场。** 设置里的插件页只列出"这个部署内置了哪些插件"，**没有安装按钮**。`dsh plugin` 是唯一的自带入口，所以上面那两步要手改 `package.json`。
 
 **关于开机自启**：不需要任何额外的自启程序或服务。这个插件一旦装进 profile，DSH 每次启动都会加载它；`cordis.patch.yml` 里的 `autoStart: true` 会让它自动重连已绑定的微信账号。你只需要"开机 → 打开 DSH"，微信那边就能用。关掉 DSH 或电脑休眠时链路断开，这是协议决定的（本机主动外拨），没有绕过的办法。
 
