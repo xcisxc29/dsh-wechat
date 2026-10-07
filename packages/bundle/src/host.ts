@@ -2617,6 +2617,56 @@ class WechatRuntime {
     return workspace.id
   }
 
+  /**
+   * Give a session the permission preset the user chose for WeChat.
+   *
+   * Why this exists at all: a session whose policy is `ask` sends a permission prompt to WeChat and
+   * then waits. On a phone that is a dead end — the user left the desk precisely so they would not
+   * have to babysit prompts, and a task that stalls until they answer one is a task they cannot run
+   * from WeChat. The default therefore lifts the guardrail for this channel's sessions.
+   *
+   * Two details that decide whether this works:
+   *
+   *  - It has to run **before the session's first turn**. DSH rejects a preset change once a turn
+   *    has begun (`agent-preset/locked`), so this is called from `ensureSession`, which the router
+   *    reaches before it prompts anything — for a new conversation and for a switch alike.
+   *  - It is best-effort. The service may be absent on a host that does not compose permission
+   *    presets, and a failure here must not cost the user their message: the worst case is that the
+   *    session keeps the profile's own policy, which is exactly the old behaviour.
+   *
+   * @param sessionId - Session that was just created or adopted.
+   */
+  #applyPermissionPreset(sessionId: string): void {
+    const preset = this.#settingsFromDisk().permissionPreset
+    if (preset === 'default') return
+    try {
+      const sessions = this.#ctx.get('sessions') as
+        | { get?: (id: string) => unknown }
+        | undefined
+      const presets = this.#ctx.get('permissionPresets') as
+        | { set?: (session: unknown, preset: string) => void }
+        | undefined
+      const session = sessions?.get?.(sessionId)
+      if (session === undefined || presets?.set === undefined) {
+        // Not an error: a host without the service keeps its own policy.
+        bootLog(
+          this.#home,
+          `permission preset '${preset}' not applied to ${sessionId}: service unavailable`,
+        )
+        return
+      }
+      presets.set(session, preset)
+      bootLog(this.#home, `permission preset '${preset}' applied to ${sessionId}`)
+    } catch (error) {
+      /*
+       * Recorded rather than thrown. A session that already ran its first turn is the expected way
+       * this fails, and losing the user's message over a permission nicety would be a worse outcome
+       * than the session keeping the profile's policy.
+       */
+      bootLog(this.#home, `permission preset failed for ${sessionId}: ${String(error)}`)
+    }
+  }
+
   /** Adapt the host session controller to the router's narrow gateway port. */
   #gateway(): SessionGateway {
     const ctx = this.#ctx
@@ -2637,11 +2687,13 @@ class WechatRuntime {
         const workspaceId = await this.#workspaceIdFor(home, isSameWorkspace(home, cwd) ? WORKSPACE_TITLE : '')
         if (workspaceId === '') {
           await ctx.sessionController.create({ sessionId, cwd: home })
+          this.#applyPermissionPreset(sessionId)
           return
         }
         // Naming the Workspace rather than the directory is what groups the session
         // under a real folder; the workspace supplies the same cwd under the hood.
         await ctx.sessionController.create({ sessionId, workspaceId })
+        this.#applyPermissionPreset(sessionId)
       },
       prompt: async (sessionId: string, text: string): Promise<void> => {
         await ctx.sessionController.prompt(
@@ -3037,6 +3089,18 @@ function readSettingsPatch(body: Record<string, unknown>): ChannelSettings {
     patch.requireConfirmation = body.requireConfirmation
   }
   if (typeof body.presenceNote === 'string') patch.presenceNote = body.presenceNote
+  /*
+   * Checked against the known values rather than passed through as any string: this value is handed
+   * to DSH as a preset name, and a typo would reach the host as a missing preset instead of being
+   * rejected here, where the mistake is still visible.
+   */
+  if (
+    body.permissionPreset === 'danger-full-access' ||
+    body.permissionPreset === 'auto' ||
+    body.permissionPreset === 'default'
+  ) {
+    patch.permissionPreset = body.permissionPreset
+  }
   return patch
 }
 

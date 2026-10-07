@@ -88,6 +88,8 @@ interface Harness {
   registeredTools: unknown[]
   /** Workspace paths the channel asked the registry to resolve, in order. */
   resolvedWorkspacePaths: string[]
+  /** Permission presets the channel applied, in order. */
+  presetApplications: { sessionId: string; preset: string }[]
   created: Created[]
   /** Messages carrying the user's own words, which is what most tests are about. */
   prompted: { sessionId: string; mode: 'queue' | 'steer'; text: string }[]
@@ -201,6 +203,19 @@ async function mountWith(options: {
   const registeredTools: unknown[] = []
   /** Paths the channel asked the registry to resolve, in order. */
   const resolvedWorkspacePaths: string[] = []
+  /** Permission presets the channel applied, in order. */
+  const presetApplications: { sessionId: string; preset: string }[] = []
+  /** Recorded so a test can assert the permission behaviour rather than infer it. */
+  const permissionPresetsSet = (session: unknown, preset: string): void => {
+    presetApplications.push({ sessionId: String((session as { id?: string }).id ?? ''), preset })
+  }
+  /**
+   * The live-session lookup the channel uses before handing the session to `permissionPresets.set`.
+   *
+   * It takes the object, not an id, so the stub has to hand one back; returning `undefined` would
+   * send the channel down its "service unavailable" path and leave the behaviour untested.
+   */
+  const sessionsGet = (id: string): { id: string; sessionId: string } => ({ id, sessionId: id })
   /**
    * Workspaces other than the channel's, keyed by the path that owns them.
    *
@@ -352,7 +367,8 @@ async function mountWith(options: {
       },
       cancel: async () => ({}),
     },
-    sessions: { get: () => undefined },
+    sessions: { get: sessionsGet },
+    permissionPresets: { set: permissionPresetsSet },
     workspaceRegistry: {
       /*
        * One workspace per path, as the real registry behaves, and the same object every time that
@@ -389,6 +405,16 @@ async function mountWith(options: {
     get(name: string) {
       if (name === 'homePaths') return { home: options.home }
       if (name === 'webServer') return { port: 0, register: () => () => {} }
+      /*
+       * The permission-preset service, reached the way the plugin reaches it.
+       *
+       * Without this the plugin takes its "service unavailable" path and the permission behaviour is
+       * silently untested — which is what the first version of that test proved by failing.
+       */
+      if (name === 'permissionPresets') {
+        return { set: permissionPresetsSet }
+      }
+      if (name === 'sessions') return { get: sessionsGet }
       return undefined
     },
     provide(name: string, value: unknown) {
@@ -415,6 +441,7 @@ async function mountWith(options: {
     listeners,
     registeredTools,
     resolvedWorkspacePaths,
+    presetApplications,
     created,
     prompted,
     allPrompts,
@@ -522,6 +549,49 @@ test('apply mounts, provides its service, and subscribes to the assistant stream
 function userPart(prompt: string): string {
   return prompt.replace(/\n\n\[渠道：微信\][^\n]*$/, '')
 }
+
+test('a WeChat session is given full permissions, so nothing waits on a phone prompt', async () => {
+  /*
+   * The point of the channel is running the agent from a phone. A session whose policy is `ask` sends
+   * a permission prompt to WeChat and then waits for the answer — which means every command stalls on
+   * a conversation the user walked away from. So full access is the default for sessions this channel
+   * creates, and it has to be set *before* the session's first turn, because DSH refuses to change a
+   * preset once a turn has begun.
+   */
+  await withHarness(async (harness) => {
+    await harness.runtime.ingest(inbound('帮我看看这个 bug'))
+
+    assert.equal(harness.presetApplications.length, 1, 'the preset is applied exactly once')
+    assert.equal(harness.presetApplications[0].preset, 'danger-full-access')
+    assert.equal(
+      harness.presetApplications[0].sessionId,
+      harness.created[0].sessionId,
+      'applied to the session that was just created, not some other one',
+    )
+  })
+})
+
+test('a stored preset of default leaves the profile\'s own policy alone', async () => {
+  const home = await mkdtemp(join(tmpdir(), 'dsh-wechat-test-'))
+  try {
+    // `seedAccount: false` matters: the harness's own seeding writes the account *and* the state
+    // file, which would overwrite the `default` this test just stored.
+    await seedState(home, { permissionPreset: 'default' })
+    const harness = await mount({ home, seedAccount: false })
+    try {
+      await harness.runtime.ingest(inbound('你好'))
+      assert.deepEqual(
+        harness.presetApplications,
+        [],
+        'nothing is applied when the user asked for the profile default',
+      )
+    } finally {
+      harness.dispose()
+    }
+  } finally {
+    await removeHome(home)
+  }
+})
 
 test('a plain message creates one session inside the channel workspace and prompts it', async () => {
   await withHarness(async (harness) => {
@@ -2141,6 +2211,23 @@ test('settings changes apply without a restart', async () => {
     assert.equal(after.settings.mergeWindowMs, 0)
     // The defaults stay reported, so the page can offer "reset to default".
     assert.equal(after.defaults.mergeWindowMs, 10_000)
+  })
+})
+
+test('the permission preset is stored and reported, defaulting to full access', async () => {
+  await withHarness(async (harness) => {
+    const before = await harness.runtime.settingsForPage()
+    assert.equal(
+      before.settings.permissionPreset,
+      'danger-full-access',
+      'full access is the default, so a phone conversation never waits on a prompt',
+    )
+
+    await harness.runtime.saveSettings({ permissionPreset: 'default' })
+    const after = await harness.runtime.settingsForPage()
+    assert.equal(after.settings.permissionPreset, 'default')
+    // Reported separately, so the page can still offer "reset to default".
+    assert.equal(after.defaults.permissionPreset, 'danger-full-access')
   })
 })
 

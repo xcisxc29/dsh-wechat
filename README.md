@@ -151,10 +151,17 @@ or failed.
 **Anyone who can message this bot can drive the computer it runs on.** The agent can execute commands
 and read and write files, and the only credential involved is the WeChat message itself.
 
+**Conversations from WeChat run with full permissions by default** — the agent does not ask before it
+acts. That is deliberate: a permission prompt is delivered to WeChat and the task then waits there, so
+on a phone every command would stall until you answered a conversation you had walked away from. Set
+**Permissions for WeChat conversations** to `Follow the DSH setting` in the settings page if you want
+the same guardrails you have at the desk.
+
 So **the bot's WeChat account, and who can reach it, are the security boundary**. There is no
 allowlist in this version. If that is not a boundary you want, do not install it.
 
-Put another way: **being able to message your bot is the same as being able to operate your computer.**
+Put another way: **being able to message your bot is the same as being able to operate your computer,
+without being asked.**
 
 ## Documentation
 

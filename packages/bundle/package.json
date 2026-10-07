@@ -1,6 +1,6 @@
 {
   "name": "dsh-wechat-plugin",
-  "version": "0.32.3",
+  "version": "0.33.0",
   "type": "module",
   "description": "WeChat ClawBot channel for DeepSeek Harness. Drives DSH sessions from WeChat over the Tencent iLink Bot API, without installing OpenClaw.",
   "keywords": [

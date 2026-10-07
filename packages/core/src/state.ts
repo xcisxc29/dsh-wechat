@@ -92,7 +92,26 @@ export interface ChannelSettings {
    * agent answers as if its user sits at the desktop console.
    */
   presenceNote?: string
+  /**
+   * Permission preset applied to every session this channel creates.
+   *
+   * Defaults to `danger-full-access`, because the other option is unusable from a phone: a session
+   * that asks before each tool call sends a prompt to WeChat and stops until the user answers, which
+   * on a phone means every command stalls on a conversation. The user chose the phone precisely to
+   * stop sitting at the desktop, so a prompt they must come back to is a prompt they will not answer.
+   *
+   * `default` leaves whatever the DSH profile is configured with, for people who want the same
+   * guardrails on WeChat as at the console.
+   *
+   * The preset can only be applied before a session's first turn — DSH locks it after that — so this
+   * is set when the channel creates or adopts a session and cannot retroactively change one that has
+   * already run.
+   */
+  permissionPreset?: PermissionPreset
 }
+
+/** Permission presets this channel will apply to its own sessions. */
+export type PermissionPreset = 'danger-full-access' | 'auto' | 'default'
 
 /** Values applied when a setting has never been stored. */
 export const DEFAULT_SETTINGS = {
@@ -102,6 +121,7 @@ export const DEFAULT_SETTINGS = {
   quoteHistory: 40,
   autoReplyAttachments: true,
   requireConfirmation: true,
+  permissionPreset: 'danger-full-access',
   presenceNote:
     '[渠道：微信] 你在和微信上的用户对话，对方在手机上，看不到这台电脑的屏幕和文件系统。' +
     '不要让他去"打开某个路径"或"看某个文件"。需要给他看东西时，直接发送：' +
@@ -125,6 +145,7 @@ export function resolveSettings(state: ChannelState): Required<ChannelSettings> 
     autoReplyAttachments:
       stored.autoReplyAttachments ?? DEFAULT_SETTINGS.autoReplyAttachments,
     requireConfirmation: stored.requireConfirmation ?? DEFAULT_SETTINGS.requireConfirmation,
+    permissionPreset: stored.permissionPreset ?? DEFAULT_SETTINGS.permissionPreset,
     presenceNote: stored.presenceNote ?? DEFAULT_SETTINGS.presenceNote,
   }
 }

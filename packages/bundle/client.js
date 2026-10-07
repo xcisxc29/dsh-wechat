@@ -122,6 +122,12 @@ window.__ModuleLoader__.load({
           '直接说「换个对话」「看下有哪些对话」「停一下」等，任意说法都行。DSH 会先说明它要做什么，你同意后再执行——想跳过这一步，把上面的「指令操作前需要确认」关掉。',
         requireConfirmation: '指令操作前需要确认',
         requireConfirmationHint: '你说「换个对话」这类要求时，DSH 会先说它要做什么，等你同意再执行。',
+        permissionPreset: '微信对话的权限',
+        permissionPresetHint:
+          '默认「完全访问」，DSH 执行命令时不再问你——问的话消息会发到微信，而任务会一直等着你回答。改这里只影响之后新建的对话。',
+        permissionFull: '完全访问：不询问，直接执行',
+        permissionAuto: '自动审核：电脑上判断',
+        permissionProfile: '跟随 DSH 设置：和桌面端一样',
         mergeWindow: '非文字消息等待时间（秒）',
         mergeWindowHint: '等多久。等待期间你发文字，就和附件一起处理；超时则只处理附件。',
         autoReplyAttachments: '等不到文字就自动处理附件',
@@ -201,6 +207,12 @@ window.__ModuleLoader__.load({
         requireConfirmation: 'Confirm before acting on a request',
         requireConfirmationHint:
           'When you ask for something like «switch conversation», DSH first says what it will do and waits for you to agree.',
+        permissionPreset: 'Permissions for WeChat conversations',
+        permissionPresetHint:
+          'Defaults to full access, so DSH does not ask before running a command — the prompt would arrive in WeChat and the task would wait for your answer. Changing this affects conversations created afterwards.',
+        permissionFull: 'Full access: run without asking',
+        permissionAuto: 'Automatic review: decided on this computer',
+        permissionProfile: 'Follow the DSH setting, same as the desktop',
         mergeWindow: 'Wait after a non-text message (seconds)',
         mergeWindowHint:
           'How long to wait. Text sent during the wait is handled with the attachment; after it, only the attachment.',
@@ -841,6 +853,33 @@ window.__ModuleLoader__.load({
               null,
               h('h3', null, t.settingsTitle),
               h('p', null, t.settingsHint),
+
+              /*
+               * The permission preset, as a select.
+               *
+               * It sits first because it is the setting people come here to change: a session that
+               * asks before every tool call sends a permission prompt to WeChat and then waits, which
+               * on a phone means the task stalls until the user answers a conversation. The channel's
+               * sessions therefore default to full access, and this is where that is turned off.
+               *
+               * It only affects sessions created after the change; DSH locks a preset once a session's
+               * first turn has begun, which the hint says out loud rather than leaving as a surprise.
+               */
+              field(
+                t.permissionPreset,
+                t.permissionPresetHint,
+                h(
+                  'select',
+                  {
+                    className: 'dsh-wechat-input',
+                    value: state.draft.permissionPreset ?? 'danger-full-access',
+                    onChange: (event) => edit('permissionPreset', event.target.value),
+                  },
+                  h('option', { value: 'danger-full-access' }, t.permissionFull),
+                  h('option', { value: 'auto' }, t.permissionAuto),
+                  h('option', { value: 'default' }, t.permissionProfile),
+                ),
+              ),
 
               h(
                 'div',
