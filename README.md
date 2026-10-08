@@ -47,7 +47,7 @@ name, a Git URL, a tarball, or a local path.
 dsh-wechat-plugin
 ```
 
-Add a version if you need one: `dsh-wechat-plugin@0.36.1`.
+Add a version if you need one: `dsh-wechat-plugin@0.36.2`.
 </details>
 
 <details>

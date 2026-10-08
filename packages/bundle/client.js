@@ -723,6 +723,43 @@ a.dsh-wechat-button { text-decoration: none; }
           ? h('p', { className: 'dsh-wechat-error', role: 'alert' }, `${t.saveFailed}: ${state.error}`)
           : null,
 
+        /*
+         * The guide, first.
+         *
+         * It answers the questions the settings themselves raise — how to install, what each switch
+         * does, why a message did not arrive — so it belongs above them rather than after the
+         * diagnostics, which is where a docs link usually ends up and where nobody looks until they
+         * have already given up.
+         *
+         * An ordinary `target="_blank"` anchor, and that is the mechanism rather than a style
+         * choice: it is what the desktop shell intercepts and hands to the system browser, while
+         * `window.open` and scripted navigation are denied by the same handler.
+         */
+        h(
+          Group,
+          { title: t.groupHelp },
+          h(
+            Card,
+            null,
+            h('h3', null, t.helpTitle),
+            h('span', { className: 'dsh-wechat-hint' }, t.helpHint),
+            h(
+              'p',
+              { className: 'dsh-wechat-actions' },
+              h(
+                'a',
+                {
+                  className: 'dsh-wechat-button dsh-wechat-outline',
+                  href: HANDBOOK_URL,
+                  target: '_blank',
+                  rel: 'noopener noreferrer',
+                },
+                t.helpOpen,
+              ),
+            ),
+          ),
+        ),
+
         // Connection: what is bound, and how to bind more.
         h(
           Group,
@@ -1140,39 +1177,6 @@ a.dsh-wechat-button { text-decoration: none; }
                 : null,
             )
           : null,
-
-              /*
-               * Last, and separate: a docs link, not a setting.
-               *
-               * Anchored with `target="_blank"` because that is what the desktop shell intercepts
-               * and hands to the system browser. Inside the diagnostics group it would read as
-               * something to check when things break, which is not what it is — the guide also
-               * covers installing and what each switch does.
-               */
-              h(
-                Group,
-                { title: t.groupHelp },
-                h(
-                  Card,
-                  null,
-                  h('h3', null, t.helpTitle),
-                  h('span', { className: 'dsh-wechat-hint' }, t.helpHint),
-                  h(
-                    'p',
-                    { className: 'dsh-wechat-actions' },
-                    h(
-                      'a',
-                      {
-                        className: 'dsh-wechat-button dsh-wechat-outline',
-                        href: HANDBOOK_URL,
-                        target: '_blank',
-                        rel: 'noopener noreferrer',
-                      },
-                      t.helpOpen,
-                    ),
-                  ),
-                ),
-              ),
       )
     }
 

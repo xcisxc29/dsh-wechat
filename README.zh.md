@@ -37,7 +37,7 @@
 dsh-wechat-plugin
 ```
 
-需要指定版本就带上：`dsh-wechat-plugin@0.36.1`。
+需要指定版本就带上：`dsh-wechat-plugin@0.36.2`。
 </details>
 
 <details>

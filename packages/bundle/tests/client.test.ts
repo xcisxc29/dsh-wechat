@@ -504,16 +504,16 @@ test('the page groups its settings, so unlike decisions are told apart', async (
     const titles = groups.map((group) => String(group.props.title))
     assert.deepEqual(
       titles,
-      ['连接', '行为', '指令', '诊断', '帮助'],
+      ['帮助', '连接', '行为', '指令', '诊断'],
       'in the order they should be read',
     )
     // The diagnostics group carries no hint: the card below it already says what the log is, so a
     // group-level line would repeat it. Asserted so the duplication cannot creep back in.
     const diagnostics = groups.find((group) => String(group.props.title) === '诊断')
     assert.equal(diagnostics.props.hint, undefined, 'no group hint for diagnostics')
-    // Help is last on purpose: it is a docs link, not a setting, and it answers questions the
-    // switches above it raise rather than the other way round.
-    assert.equal(titles.at(-1), '帮助', 'the guide is the last group')
+    // Help comes first: it answers the questions the switches below it raise, and a docs link placed
+    // last is one nobody reaches until they have already given up.
+    assert.equal(titles[0], '帮助', 'the guide comes first')
   } finally {
     bundle.restore()
   }
