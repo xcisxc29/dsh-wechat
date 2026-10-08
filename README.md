@@ -158,10 +158,16 @@ Type these to control which DSH conversation you are talking to:
 agent judges the intent rather than matching fixed rules, and a switch tells you whether it succeeded
 or failed.
 
-## Read this before you start
+## Security
 
-**Anyone who can message this bot can drive the computer it runs on.** The agent can execute commands
-and read and write files, and the only credential involved is the WeChat message itself.
+**Only you can reach it.** The channel talks to Tencent's official iLink gateway, and nothing else —
+no third-party service, no self-hosted relay in the middle. When you scan the QR code, the bot is
+**cryptographically bound to your WeChat account**: the token it receives embeds your `ilink_user_id`,
+and the service only ever delivers messages from that one account. The bot is not a WeChat contact —
+it has no shareable card, nothing searches for it, and nobody can add it. There is no "someone else
+could message it" surface, which is why no allowlist exists: the protocol already is one.
+
+Two things are still true and worth knowing:
 
 **Conversations from WeChat run with full permissions by default** — the agent does not ask before it
 acts. That is deliberate: a permission prompt is delivered to WeChat and the task then waits there, so
@@ -169,18 +175,15 @@ on a phone every command would stall until you answered a conversation you had w
 **Permissions for WeChat conversations** to `Follow the DSH setting` in the settings page if you want
 the same guardrails you have at the desk.
 
+**The agent runs as you.** It can execute commands and read and write files, with your user's
+permissions — that is what it is for, and it means anything you can do on this machine, it can do.
+So: skim what you asked for before walking away, and **lock the screen** when you leave. Locking does
+not stop the agent (see the user guide), and it keeps anyone passing by out of your desktop.
+
 **Any session on this machine can push to your WeChat by default.** That is what makes "tell me when it
 is done" work: the session doing the work is usually not the one your WeChat conversation is bound to,
 and without this it could not report its own result. Turn off **Let other sessions push to WeChat** to
 restore the stricter rule, where only the bound session may send.
-
-So **the bot's WeChat account, and who can reach it, are the security boundary**. There is deliberately
-no allowlist, and none is planned: choosing to drive a computer over WeChat already means accepting
-that being able to message it is being able to operate it, and a second gate in front of the same
-decision would add nothing. If that is not a boundary you want, do not install it.
-
-Put another way: **being able to message your bot is the same as being able to operate your computer,
-without being asked.**
 
 ## Documentation
 

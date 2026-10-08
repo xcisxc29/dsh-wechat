@@ -1268,9 +1268,19 @@ class WechatRuntime {
     const monitor = this.#monitors.get(message.accountId)?.monitor
     void monitor?.setTyping(message.peerId, true)
     try {
-      // The allow list is checked before anything else is read or downloaded. The bot is bound
-      // to a personal account, so without this anyone who can message it can run work here —
-      // and a check placed later would already have fetched their attachments.
+      /*
+       * No sender check, because the protocol makes one unnecessary.
+       *
+       * An iLink bot is bound at provisioning to the single WeChat user who scanned the QR, and the
+       * issued bot token embeds that user's id. The service only ever delivers that user's messages —
+       * `from_user_id` is always the scanner — and the bot is not a WeChat contact entity: it has no
+       * shareable card and nothing to search for. There is no third party who could reach it, so
+       * there is no list to keep.
+       *
+       * This is written down because a stale comment here once claimed an allow list *was* checked.
+       * None ever existed, and a security warning was built on top of that claim and shipped in the
+       * README for the life of the project. Do not reintroduce either.
+       */
       // Record the raw item before touching it. The service's own image item is the only
       // known-renderable sample of this protocol — this plugin is the only implementation,
       // and nothing in the application documents the format — so the field list it uses is
