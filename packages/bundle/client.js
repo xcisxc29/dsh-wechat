@@ -19,6 +19,17 @@
 
 const PREFIX = '/.dsh-wechat-plugin'
 
+/**
+ * Where the user guide lives, for the link in the settings page.
+ *
+ * A rendered GitHub page rather than the raw file: the handbook is long and full of tables, and this
+ * is the reading-friendly form. Opened as an ordinary `target="_blank"` anchor, which the desktop
+ * shell intercepts and hands to the system browser — the same way its own links work. A `window.open`
+ * or a scripted navigation would be denied by that same handler, so the anchor is not a style
+ * choice, it is the mechanism.
+ */
+const HANDBOOK_URL = 'https://github.com/xcisxc29/dsh-wechat/blob/main/docs/HANDBOOK-USER.md'
+
 /** Report a client-side failure to the host, which writes it to the boot log. */
 function reportFailure(scope, error) {
   try {
@@ -107,6 +118,10 @@ window.__ModuleLoader__.load({
         groupBehaviour: '行为',
         groupBehaviourHint: '收到消息后怎么处理。',
         groupDiagnostics: '诊断',
+        groupHelp: '帮助',
+        helpTitle: '使用手册',
+        helpHint: '安装、扫码、能发什么、设置逐条说明、排错——都在手册里。',
+        helpOpen: '打开使用手册',
         groupCommands: '指令',
         commandsSlash: '斜杠指令',
         commandsSlashHint: '在微信里直接发送。不经过 agent，也不问确认，最快。',
@@ -194,6 +209,11 @@ window.__ModuleLoader__.load({
         groupBehaviour: 'Behaviour',
         groupBehaviourHint: 'How incoming messages are handled.',
         groupDiagnostics: 'Diagnostics',
+        groupHelp: 'Help',
+        helpTitle: 'User guide',
+        helpHint:
+          'Installing, scanning, what can be sent, every setting, and troubleshooting — all of it is in the guide.',
+        helpOpen: 'Open the user guide',
         groupCommands: 'Commands',
         commandsSlash: 'Slash commands',
         commandsSlashHint: 'Sent straight from WeChat. They skip the agent and need no confirmation, so they are the fastest route.',
@@ -340,6 +360,8 @@ window.__ModuleLoader__.load({
 .dsh-wechat-button:disabled { cursor: not-allowed; opacity: .4; }
 .dsh-wechat-button:focus-visible { outline: var(--dsw-focus-ring-width, 2px) solid var(--dsw-focus-ring-color, var(--dsw-alias-state-business-primary)); outline-offset: 1px; }
 .dsh-wechat-outline { border: 0.5px solid var(--dsw-alias-border-l3); }
+/* The same button, rendered as an anchor so the shell's link handler picks it up. */
+a.dsh-wechat-button { text-decoration: none; }
 .dsh-wechat-primary { background: var(--dsw-alias-button-primary-fill); color: var(--dsw-alias-label-primary-foreground); }
 .dsh-wechat-primary:hover:not(:disabled) { background: var(--dsw-alias-button-primary-hover); }
 .dsh-wechat-danger { color: var(--dsw-alias-state-error-primary); border: 0.5px solid var(--dsw-alias-border-l3); }
@@ -1118,6 +1140,39 @@ window.__ModuleLoader__.load({
                 : null,
             )
           : null,
+
+              /*
+               * Last, and separate: a docs link, not a setting.
+               *
+               * Anchored with `target="_blank"` because that is what the desktop shell intercepts
+               * and hands to the system browser. Inside the diagnostics group it would read as
+               * something to check when things break, which is not what it is — the guide also
+               * covers installing and what each switch does.
+               */
+              h(
+                Group,
+                { title: t.groupHelp },
+                h(
+                  Card,
+                  null,
+                  h('h3', null, t.helpTitle),
+                  h('span', { className: 'dsh-wechat-hint' }, t.helpHint),
+                  h(
+                    'p',
+                    { className: 'dsh-wechat-actions' },
+                    h(
+                      'a',
+                      {
+                        className: 'dsh-wechat-button dsh-wechat-outline',
+                        href: HANDBOOK_URL,
+                        target: '_blank',
+                        rel: 'noopener noreferrer',
+                      },
+                      t.helpOpen,
+                    ),
+                  ),
+                ),
+              ),
       )
     }
 

@@ -263,22 +263,27 @@ export interface SendTypingReq {
   status?: number
 }
 
-export interface SendTypingResp {
+/**
+ * Refusal code as the service actually spells it.
+ *
+ * Declared on every response that can be refused, because leaving it out is how two silent failures
+ * happened here: `sendmessage` reported a refusal nobody could read, and `getconfig` answered
+ * `ret: -2, 'ilink_user_id required'` while the type said there was nothing to check.
+ */
+interface RefusalFields {
+  errcode?: number
   ret?: number
   errmsg?: string
 }
 
-export interface GetConfigResp {
-  ret?: number
-  errmsg?: string
+export interface SendTypingResp extends RefusalFields {}
+
+export interface GetConfigResp extends RefusalFields {
   /** Base64 ticket required by `sendtyping`. */
   typing_ticket?: string
 }
 
-export interface NotifyResp {
-  ret?: number
-  errmsg?: string
-}
+export interface NotifyResp extends RefusalFields {}
 
 /** One QR-code login attempt. */
 export interface QRCodeResponse {

@@ -38,8 +38,7 @@ name, a Git URL, a tarball, or a local path.
 > ### The name to install is `dsh-wechat-plugin`
 >
 > The repository is called `dsh-wechat`, but the package is not: **copy `dsh-wechat-plugin` rather than
-> typing it, and mind the `-plugin`.** There is an unrelated plugin by another author published as
-> `dsh-wechat`, so installing that name gets you their work rather than this one.
+> typing it, and mind the `-plugin`.** The install command has to match the package name exactly.
 
 <details open>
 <summary><b>From npm</b> — nothing to configure</summary>
@@ -48,7 +47,7 @@ name, a Git URL, a tarball, or a local path.
 dsh-wechat-plugin
 ```
 
-Add a version if you need one: `dsh-wechat-plugin@0.35.2`.
+Add a version if you need one: `dsh-wechat-plugin@0.36.1`.
 </details>
 
 <details>
@@ -205,7 +204,7 @@ pnpm install
 pnpm build              # compiles only, leaving @dsh-wechat/core imports for pack to rewrite
 pnpm run dist           # build + inline core: the loadable form a Git install needs
 pnpm typecheck
-pnpm test               # 192 tests
+pnpm test               # 194 tests
 pnpm check              # build + typecheck + test
 pnpm run pack           # run dist first
 pnpm run verify-pack    # unpack, check the manifest's files, mount it as DSH would

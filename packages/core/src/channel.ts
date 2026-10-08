@@ -207,13 +207,30 @@ export class ChannelMonitor {
     const { account } = this.#options
     try {
       if (this.#typingTicket === undefined) {
+        /*
+         * `ilink_user_id` is required here. Without it the service answers `ret: -2,
+         * 'ilink_user_id required'` with HTTP 200, `typing_ticket` comes back undefined, and the
+         * early return below turns the whole feature into a no-op — invisibly, because typing is
+         * designed never to raise. That is exactly what happened: the indicator was implemented,
+         * wired up, and never once appeared.
+         */
         const config = await apiCall<GetConfigResp>({
           baseUrl: account.baseUrl,
           endpoint: 'ilink/bot/getconfig',
-          body: {},
+          body: { ilink_user_id: peerId },
           token: account.token,
           timeoutMs: 10_000,
         })
+        const errcode = config.errcode ?? config.ret
+        if (errcode !== undefined && errcode !== 0) {
+          // Recorded rather than swallowed: a failure here is silent by nature, so the log is the
+          // only place it can ever be noticed.
+          this.#options.onError?.(
+            new Error(
+              `getconfig 失败 ret=${String(config.ret ?? '')} errcode=${String(config.errcode ?? '')} errmsg=${config.errmsg ?? ''}`,
+            ),
+          )
+        }
         this.#typingTicket = config.typing_ticket
       }
       if (!this.#typingTicket) return

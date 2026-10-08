@@ -770,3 +770,70 @@ test('sendText surfaces a refusal rather than reporting success', async () => {
     globalThis.fetch = realFetch
   }
 })
+
+test('setTyping asks for the ticket with the required ilink_user_id', async () => {
+  /*
+   * The request that made "typing…" a no-op for the whole life of the project.
+   *
+   * `getconfig` requires `ilink_user_id`. An empty body gets `ret: -2, 'ilink_user_id required'` back
+   * with HTTP 200, `typing_ticket` comes back undefined, and `setTyping` returns early. Nothing
+   * throws — that method deliberately swallows everything, being cosmetic — so the feature was
+   * implemented, wired up, and never once visible.
+   */
+  const bodies: { url: string; body: string }[] = []
+  const realFetch = globalThis.fetch
+  globalThis.fetch = (async (url: string, init?: { body?: unknown }) => {
+    const body = typeof init?.body === 'string' ? init.body : ''
+    bodies.push({ url: String(url), body })
+    const payload = String(url).includes('getconfig')
+      ? { ret: 0, typing_ticket: 'ticket-1' }
+      : { ret: 0 }
+    return new Response(JSON.stringify(payload), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    })
+  }) as typeof fetch
+
+  try {
+    const { ChannelMonitor } = await import('../src/channel.ts')
+    const monitor = new ChannelMonitor({ account, onMessage: async () => {} })
+    await monitor.setTyping('peer@im.wechat', true)
+
+    const config = bodies.find((entry) => entry.url.includes('getconfig'))
+    assert.ok(config, 'the ticket is fetched first')
+    assert.match(config.body, /"ilink_user_id":"peer@im\.wechat"/, 'and it carries the peer id')
+
+    const typing = bodies.find((entry) => entry.url.includes('sendtyping'))
+    assert.ok(typing, 'then the indicator is sent')
+    assert.match(typing.body, /"typing_ticket":"ticket-1"/)
+  } finally {
+    globalThis.fetch = realFetch
+  }
+})
+
+test('setTyping records a refused getconfig instead of failing silently', async () => {
+  // A ticket that cannot be fetched is invisible by design, so the log is the only place it could ever
+  // be noticed. This assertion is what would have caught the missing parameter immediately.
+  const errors: unknown[] = []
+  const realFetch = globalThis.fetch
+  globalThis.fetch = (async () =>
+    new Response(JSON.stringify({ ret: -2, errmsg: 'ilink_user_id required' }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    })) as typeof fetch
+
+  try {
+    const { ChannelMonitor } = await import('../src/channel.ts')
+    const monitor = new ChannelMonitor({
+      account,
+      onMessage: async () => {},
+      onError: (error) => errors.push(error),
+    })
+    await monitor.setTyping('peer@im.wechat', true)
+
+    assert.equal(errors.length, 1, 'the refusal is recorded')
+    assert.match(String(errors[0]), /ilink_user_id required/)
+  } finally {
+    globalThis.fetch = realFetch
+  }
+})

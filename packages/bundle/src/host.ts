@@ -116,6 +116,22 @@ const MAX_REPLY_CHARS = 4_000
 const LOGIN_RESULT_TTL_MS = 30_000
 
 /**
+ * How often to re-send the "typing…" indicator while a turn is running.
+ *
+ * The client stops showing it after a few seconds, so sending it once at the start of a task that
+ * takes a minute is the same as not sending it at all.
+ */
+const TYPING_REFRESH_MS = 5_000
+
+/**
+ * When to give up showing "typing…" regardless of the turn.
+ *
+ * Nothing should ever be composing for this long, and the indicator must not be able to stick: if a
+ * reply never arrives, this is what stops the channel from re-sending forever.
+ */
+const TYPING_MAX_MS = 30 * 60 * 1000
+
+/**
  * Directory name for the WeChat sessions' workspace, under the DSH home.
  *
  * Every session this channel creates uses this one directory as its `cwd`. That is
@@ -475,6 +491,21 @@ class WechatRuntime {
   readonly #errors: string[] = []
   /** Non-text messages awaiting an instruction, keyed by conversation. */
   readonly #pending = new Map<string, PendingBatch>()
+  /**
+   * Conversations currently showing "typing…", with the timers that keep it up.
+   *
+   * Keyed by conversation so a second message in the same chat does not start a second refresh loop,
+   * and cleared by the reply rather than by the inbound handler — see {@link #startTyping}.
+   */
+  readonly #typing = new Map<
+    string,
+    {
+      interval: ReturnType<typeof setInterval>
+      cap: ReturnType<typeof setTimeout>
+      accountId: string
+      peerId: string
+    }
+  >()
   /**
    * Interactions waiting on a WeChat reply, keyed by conversation.
    *
@@ -1265,8 +1296,8 @@ class WechatRuntime {
 
     const account = await this.#account(message.accountId)
     if (account === undefined) return
-    const monitor = this.#monitors.get(message.accountId)?.monitor
-    void monitor?.setTyping(message.peerId, true)
+    this.#startTyping(message.accountId, message.conversationId, message.peerId)
+    let handedOff = false
     try {
       /*
        * No sender check, because the protocol makes one unnecessary.
@@ -1320,13 +1351,68 @@ class WechatRuntime {
         return
       }
 
-      await this.#deliver(message, { media: [], text: message.text, attachments: [] })
+      handedOff = await this.#deliver(message, { media: [], text: message.text, attachments: [] })
     } catch (error) {
       this.#recordError(`处理消息失败: ${error instanceof Error ? error.message : String(error)}`)
       await this.#reply(account, message.conversationId, message.peerId, '处理这条消息时出错了。')
     } finally {
-      void monitor?.setTyping(message.peerId, false)
+      /*
+       * Only cleared when the turn did *not* go to the agent.
+       *
+       * A message handed to the agent is still being worked on when this returns — `#deliver`
+       * submits and comes back — so clearing here would blink the indicator off while the agent is
+       * busy, which is the opposite of what it is for. In that case `#reply` clears it, when the
+       * answer actually goes out. Anything else (a parked attachment, a command answered locally)
+       * is finished by the time this returns, so it is cleared here.
+       */
+      if (!handedOff) this.#stopTyping(message.conversationId)
     }
+  }
+
+  /**
+   * Show "typing…" for a conversation, and keep it showing until the reply goes out.
+   *
+   * Re-sent on an interval because the indicator is short-lived on the client: sent once, it
+   * disappears long before a real task finishes, which is the case this exists for. The interval is
+   * cleared in {@link #stopTyping}, and bounded here so a reply that never comes cannot leave the
+   * channel re-sending forever.
+   *
+   * @param accountId - Account the message came in on.
+   * @param conversationId - Conversation to key the state by.
+   * @param peerId - Peer to show it to.
+   */
+  #startTyping(accountId: string, conversationId: string, peerId: string): void {
+    const monitor = this.#monitors.get(accountId)?.monitor
+    if (monitor === undefined) return
+    if (this.#typing.has(conversationId)) return
+
+    const send = (): void => {
+      void monitor.setTyping(peerId, true)
+    }
+    send()
+    const interval = setInterval(send, TYPING_REFRESH_MS)
+    // `unref` so a pending indicator never keeps the process alive on shutdown.
+    interval.unref?.()
+    const cap = setTimeout(() => {
+      this.#stopTyping(conversationId)
+    }, TYPING_MAX_MS)
+    cap.unref?.()
+    this.#typing.set(conversationId, { interval, cap, accountId, peerId })
+  }
+
+  /**
+   * Clear "typing…" for a conversation, if it was showing.
+   *
+   * @param conversationId - Conversation to clear.
+   */
+  #stopTyping(conversationId: string): void {
+    const state = this.#typing.get(conversationId)
+    if (state === undefined) return
+    this.#typing.delete(conversationId)
+    clearInterval(state.interval)
+    clearTimeout(state.cap)
+    const monitor = this.#monitors.get(state.accountId)?.monitor
+    void monitor?.setTyping(state.peerId, false)
   }
 
   /**
@@ -1603,7 +1689,7 @@ class WechatRuntime {
       text: string
       attachments: { media: DownloadedMedia; path: string }[]
     },
-  ): Promise<void> {
+  ): Promise<boolean> {
     try {
       const parked = this.#claimParked(message.conversationId)
       const attachments = [...parked.attachments, ...incoming.attachments]
@@ -1615,7 +1701,7 @@ class WechatRuntime {
         .filter((part) => part !== '')
         .join('\n\n')
       const account = await this.#account(message.accountId)
-      if (account === undefined) return
+      if (account === undefined) return false
 
       // A command answers locally and never reaches the agent, so an attachment riding along
       // would be dropped without trace. With an attachment the text goes to the agent as an
@@ -1631,10 +1717,10 @@ class WechatRuntime {
         })
         if (routed.kind === 'reply') {
           await this.#reply(account, message.conversationId, message.peerId, routed.text)
-          return
+          return false
         }
         await this.#prompt(routed.decision, message, [], quoted)
-        return
+        return true
       }
 
       // Resolve the session the usual way, then hand it the attachments *and* the text
@@ -1648,15 +1734,17 @@ class WechatRuntime {
       })
       if (bound.kind === 'reply') {
         await this.#reply(account, message.conversationId, message.peerId, bound.text)
-        return
+        return false
       }
       await this.#prompt({ ...bound.decision, prompt: text }, message, attachments, quoted)
+      return true
     } catch (error) {
       this.#recordError(`处理消息失败: ${error instanceof Error ? error.message : String(error)}`)
       const account = await this.#account(message.accountId)
       if (account !== undefined) {
         await this.#reply(account, message.conversationId, message.peerId, '处理这条消息时出错了。')
       }
+      return false
     }
   }
 
@@ -2538,6 +2626,13 @@ class WechatRuntime {
     peerId: string,
     text: string,
   ): Promise<void> {
+    /*
+     * Anything sent into a conversation ends the "typing…" state for it: the channel is speaking, so
+     * it is no longer composing. This is where the indicator is cleared for a turn handed to the
+     * agent, because that is the moment the agent's answer goes out — the inbound handler returns
+     * long before this, having only submitted the request.
+     */
+    this.#stopTyping(conversationId)
     const state = await this.#store.read()
     const contextToken = state.contextTokens[account.accountId]?.[conversationId]
     const settings = await this.#settings()
@@ -2902,6 +2997,16 @@ class WechatRuntime {
       if (entry !== undefined) clearTimeout(entry.timer)
       await this.#flushReply(sessionId)
     }
+  }
+
+  /**
+   * Clear every "typing…" indicator and stop its refresh loop. Used on shutdown.
+   *
+   * Without this the intervals would outlive the plugin and keep calling a monitor that is being
+   * torn down, and whichever conversations were mid-turn would be left showing "typing" forever.
+   */
+  stopTypingAll(): void {
+    for (const conversationId of [...this.#typing.keys()]) this.#stopTyping(conversationId)
   }
 
   async #account(accountId: string): Promise<WeixinAccount | undefined> {
@@ -3316,6 +3421,7 @@ export function apply(
           if (typeof detachQuestions === 'function') detachQuestions()
           detachRoutes()
           if (typeof detachTool === 'function') detachTool()
+          runtime.stopTypingAll()
           void runtime.flushReplies()
           void runtime.halt()
         } catch (error) {

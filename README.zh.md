@@ -28,9 +28,7 @@
 
 > ### 要装的名字是 `dsh-wechat-plugin`
 >
-> **仓库**叫 `dsh-wechat`，但**包名不是**：请**复制 `dsh-wechat-plugin`**，别手打，注意后面那个 `-plugin`。
->
-> npm 上另有一位作者的插件就叫 `dsh-wechat`，装那个名字得到的是别人的作品，不是这个。
+> **仓库**叫 `dsh-wechat`，但**包名不是**：请**复制 `dsh-wechat-plugin`**，别手打，注意后面那个 `-plugin`。安装命令必须和包名完全一致。
 
 <details open>
 <summary><b>从 npm 装</b> —— 不需要额外配置</summary>
@@ -39,7 +37,7 @@
 dsh-wechat-plugin
 ```
 
-需要指定版本就带上：`dsh-wechat-plugin@0.35.2`。
+需要指定版本就带上：`dsh-wechat-plugin@0.36.1`。
 </details>
 
 <details>
@@ -175,7 +173,7 @@ pnpm install
 pnpm build              # 只编译，保留 @dsh-wechat/core 引用（pack 要靠它改写）
 pnpm run dist           # build + 内嵌 core，产出可直接加载的形态
 pnpm typecheck
-pnpm test               # 192 项
+pnpm test               # 194 项
 pnpm check              # build + typecheck + test
 pnpm run pack           # 需要先 dist
 pnpm run verify-pack    # 解包、校验清单文件、按 DSH 的方式挂载一次
