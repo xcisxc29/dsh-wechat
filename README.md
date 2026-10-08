@@ -13,11 +13,12 @@ No OpenClaw, and no public IP required.
 current as the desktop app moves on. A lot of community plugins quietly stopped working when DSH
 updated; this one is maintained alongside it, and every change is released through CI.
 
-![The phone on the left, at 16:16, reading an answer about the PC's clock, and the locked PC on the right, also at 16:16](https://raw.githubusercontent.com/xcisxc29/dsh-wechat/main/docs/images/hero.png)
+![The phone on the left, at 16:16, reading an answer about the PC's clock; the locked PC in the middle, also at 16:16; and below them the DeepSeek Harness window working through that same conversation](https://raw.githubusercontent.com/xcisxc29/dsh-wechat/main/docs/images/hero.png)
 
 The screenshot above is the whole idea in one frame: the PC is **locked**, and the phone is still
 using it. At 16:16 the phone asks for a file on that machine's desktop and for the time on its clock —
-both come back, and the two status bars read the same minute.
+both come back, the two status bars read the same minute, and underneath is the window that did the
+work, with both requests already answered in the session list.
 
 [中文说明](README.zh.md)
 
