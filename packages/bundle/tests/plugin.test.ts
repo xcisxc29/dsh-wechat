@@ -778,29 +778,34 @@ test('an inbound image is downloaded, decrypted, and handed to the agent by path
   const { reference, close } = await serveEncrypted(plaintext, aesKey)
 
   try {
-    await withHarness(async (harness) => {
-      // Captioned, but every attachment opens the merge window, so this still waits. The
-      // point of the test is the download, decryption, and stored path.
-      await harness.runtime.ingest(
-        inbound('看看这个', {
-          media: [{ type: 2, image_item: { media: reference, aeskey: aesKey.toString('hex') } }],
-        }),
-      )
-      await new Promise((resolve) => setTimeout(resolve, 10_600))
+    // A short merge window: the test is about what happens *after* it closes, not about its length,
+    // and the default ten seconds is ten seconds of suite time for nothing.
+    await withSettings(
+      async (harness) => {
+        // Captioned, but every attachment opens the merge window, so this still waits. The
+        // point of the test is the download, decryption, and stored path.
+        await harness.runtime.ingest(
+          inbound('看看这个', {
+            media: [{ type: 2, image_item: { media: reference, aeskey: aesKey.toString('hex') } }],
+          }),
+        )
+        await waitFor(() => harness.prompted.length === 1, 'the attachment to be released')
 
-      // The prompt must carry the agent to the file, since the file itself is bytes.
-      assert.equal(harness.prompted.length, 1)
-      const prompt = harness.prompted[0].text
-      assert.match(prompt, /\[图片\]/)
-      assert.match(prompt, /看看这个/, 'the caption travels with the attachment')
-      const path = /\[图片\] (.+?) \(/.exec(prompt)?.[1]
-      assert.ok(path, `the prompt must name the stored path, got: ${prompt}`)
+        // The prompt must carry the agent to the file, since the file itself is bytes.
+        assert.equal(harness.prompted.length, 1)
+        const prompt = harness.prompted[0].text
+        assert.match(prompt, /\[图片\]/)
+        assert.match(prompt, /看看这个/, 'the caption travels with the attachment')
+        const path = /\[图片\] (.+?) \(/.exec(prompt)?.[1]
+        assert.ok(path, `the prompt must name the stored path, got: ${prompt}`)
 
-      // Round-trip proof: the bytes on disk are the plaintext that went in.
-      const written = await readFile(path)
-      assert.deepEqual(written, plaintext)
-      assert.match(path.replaceAll('\\', '/'), /dsh_wechat\/媒体\//)
-    })
+        // Round-trip proof: the bytes on disk are the plaintext that went in.
+        const written = await readFile(path)
+        assert.deepEqual(written, plaintext)
+        assert.match(path.replaceAll('\\', '/'), /dsh_wechat\/媒体\//)
+      },
+      { mergeWindowMs: 200 },
+    )
   } finally {
     await close()
   }
@@ -1701,16 +1706,20 @@ test('a caption that never comes releases the photo after the window', async () 
   const { reference, close } = await serveEncrypted(Buffer.from('photo bytes'), aesKey)
 
   try {
-    await withHarness(async (harness) => {
-      await harness.runtime.ingest(await imageMessage(aesKey, '', reference))
-      assert.equal(harness.prompted.length, 0)
+    // A short window, so the test measures the release rather than the wait. What it asserts is that
+    // the photo is not stranded when no caption follows — the length of the window is a setting.
+    await withSettings(
+      async (harness) => {
+        await harness.runtime.ingest(await imageMessage(aesKey, '', reference))
+        assert.equal(harness.prompted.length, 0)
 
-      // Wait out the merge window; the photo must not be stranded.
-      await new Promise((resolve) => setTimeout(resolve, 10_600))
+        await waitFor(() => harness.prompted.length === 1, 'the photo to be released')
 
-      assert.equal(harness.prompted.length, 1, 'the photo is prompted once the window closes')
-      assert.match(harness.prompted[0].text, /\[图片\]/)
-    })
+        assert.equal(harness.prompted.length, 1, 'the photo is prompted once the window closes')
+        assert.match(harness.prompted[0].text, /\[图片\]/)
+      },
+      { mergeWindowMs: 200 },
+    )
   } finally {
     await close()
   }
