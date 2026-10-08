@@ -13,11 +13,11 @@ No OpenClaw, and no public IP required.
 current as the desktop app moves on. A lot of community plugins quietly stopped working when DSH
 updated; this one is maintained alongside it, and every change is released through CI.
 
-![The phone on the left, mid-conversation at 16:16, and the locked PC on the right, also at 16:16](https://raw.githubusercontent.com/xcisxc29/dsh-wechat/main/docs/images/hero.png)
+![The phone on the left, at 16:16, reading an answer about the PC's clock, and the locked PC on the right, also at 16:16](https://raw.githubusercontent.com/xcisxc29/dsh-wechat/main/docs/images/hero.png)
 
-The screenshot above is the whole idea in one frame: the PC is **locked** at 16:16, and at 16:16 the
-phone is asking that machine for a file — WeChat shows *对方正在输入…* ("typing") in the header while
-the agent works, then a picture from the PC's desktop arrives in the chat.
+The screenshot above is the whole idea in one frame: the PC is **locked**, and the phone is still
+using it. At 16:16 the phone asks for a file on that machine's desktop and for the time on its clock —
+both come back, and the two status bars read the same minute.
 
 [中文说明](README.zh.md)
 
@@ -64,7 +64,7 @@ name, a Git URL, a tarball, or a local path.
 dsh-wechat-plugin
 ```
 
-Add a version if you need one: `dsh-wechat-plugin@0.36.4`.
+Add a version if you need one: `dsh-wechat-plugin@0.36.5`.
 </details>
 
 <details>

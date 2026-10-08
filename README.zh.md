@@ -10,9 +10,9 @@
 
 **能在当前的 DSH 桌面端上跑** —— 针对 DSH `0.2.0-rc.2` 开发和实测，**并会随桌面端的更新持续跟进**。不少社区插件随着 DSH 升级已经悄悄不能用了；**这个是一直维护的**，每次改动都走 CI 发布。
 
-![左边是 16:16 的手机对话，右边是同一时刻锁着屏的电脑](https://raw.githubusercontent.com/xcisxc29/dsh-wechat/main/docs/images/hero.png)
+![左边是 16:16 的手机，正在读一条关于电脑时钟的答复；右边是同一时刻锁着屏的电脑](https://raw.githubusercontent.com/xcisxc29/dsh-wechat/main/docs/images/hero.png)
 
-**上面这一张就是全部意思**：电脑在 16:16 **锁着屏**，而 16:16 那一刻手机正在向这台电脑要文件——微信顶部显示 **「对方正在输入…」** 表示 agent 正在干活，随后电脑桌面上的图片就发到了聊天里。
+**上面这一张就是全部意思**：电脑**锁着屏**，手机照样在用。16:16 那一刻，手机向这台电脑要了桌面上的一个文件、又问了它的时钟——**两样都回来了**，两块屏幕的状态栏是同一分钟。
 
 [English](README.md)
 
@@ -52,7 +52,7 @@
 dsh-wechat-plugin
 ```
 
-需要指定版本就带上：`dsh-wechat-plugin@0.36.4`。
+需要指定版本就带上：`dsh-wechat-plugin@0.36.5`。
 </details>
 
 <details>
