@@ -58,10 +58,26 @@ test('the index key drops the session prefix, and both spellings are tried', () 
 })
 
 test('workspace comparison tolerates separators and case', () => {
-  assert.equal(isSameWorkspace('C:\\Users\\me\\x', 'C:/Users/me/x'), true)
-  assert.equal(isSameWorkspace('C:\\Users\\me\\x\\', 'c:\\users\\ME\\x'), true)
+  assert.equal(isSameWorkspace('C:\\Users\\me\\x', 'C:/Users/me/x', true), true)
+  assert.equal(isSameWorkspace('C:\\Users\\me\\x\\', 'c:\\users\\ME\\x', true), true)
   // A different directory is not the same directory, however similar.
-  assert.equal(isSameWorkspace('C:\\Users\\me\\x2', 'C:/Users/me/x'), false)
+  assert.equal(isSameWorkspace('C:\\Users\\me\\x2', 'C:/Users/me/x', true), false)
+})
+
+test('on a case-sensitive filesystem, case distinguishes two directories', () => {
+  /*
+   * The bug this exists for: the comparison lower-cased every path on every platform. Correct on
+   * Windows, wrong on Linux, where `/home/me/Projects` and `/home/me/projects` are two directories —
+   * so a stranger's sessions would be counted as the channel's own and adopted under a workspace
+   * they do not belong to.
+   */
+  assert.equal(
+    isSameWorkspace('/home/me/Projects', '/home/me/projects', false),
+    false,
+    'case matters where the filesystem says it does',
+  )
+  assert.equal(isSameWorkspace('/home/me/x/', '/home/me/x', false), true, 'separators still normalise')
+  assert.equal(isSameWorkspace('/home/me/x', '/home/me/x', false), true)
 })
 
 /**

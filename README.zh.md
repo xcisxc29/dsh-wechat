@@ -37,7 +37,7 @@
 dsh-wechat-plugin
 ```
 
-需要指定版本就带上：`dsh-wechat-plugin@0.36.2`。
+需要指定版本就带上：`dsh-wechat-plugin@0.36.3`。
 </details>
 
 <details>
@@ -173,7 +173,7 @@ pnpm install
 pnpm build              # 只编译，保留 @dsh-wechat/core 引用（pack 要靠它改写）
 pnpm run dist           # build + 内嵌 core，产出可直接加载的形态
 pnpm typecheck
-pnpm test               # 194 项
+pnpm test               # 195 项
 pnpm check              # build + typecheck + test
 pnpm run pack           # 需要先 dist
 pnpm run verify-pack    # 解包、校验清单文件、按 DSH 的方式挂载一次

@@ -195,6 +195,7 @@ POST ilink/bot/getconfig  {}   →  {"ret":-2,"errmsg":"ilink_user_id required"}
 | **0.36.0** | **更正安全模型**：原句"任何人发消息都能控制你电脑"是错的 | 见「已知的取舍」 |
 | **0.36.1** | 修：「对方正在输入」从未显示过；设置页加「帮助」分组可打开用户手册 | 见 3.7 |
 | **0.36.2** | 「帮助」分组从最下面移到最上面 | —— |
+| **0.36.3** | 修：路径比较在 Linux 上会混淆大小写不同的目录 | 见 7.6 |
 
 **发布节奏的转折点在 `0.33.1`**：那之前每个版本都是手动 `npm publish`（要按指纹、要等审核）；那之后打 tag 就自动发布，人不再碰 npm。
 
@@ -451,7 +452,7 @@ npm view dsh-wechat-plugin versions --registry=https://registry.npmjs.org
 pnpm build              # 只编译，保留 @dsh-wechat/core 引用（pack 要靠它改写）
 pnpm run dist           # build + 内嵌 core：Git 安装要的可直接加载形态
 pnpm typecheck          # 含 examples/
-pnpm test               # 194 项
+pnpm test               # 195 项
 pnpm run check:install  # 两条安装路径的约束
 pnpm run pack           # 需要先 build，不能先 dist
 pnpm run verify-pack    # 解包、校验清单、按 DSH 的方式挂载一次
@@ -531,13 +532,43 @@ assert.equal(harness.prompted.length, 1)
 
 > **判断标准**：如果你的等待时间**是从另一个时间常量推算出来的**（"窗口 10 秒，那我等 10.6 秒"），**那就是错的**。两个数字会各自漂移，而它们之间的距离就是你的假失败率。
 
-### 7.6 注释与提交信息
+### 7.6 换一台电脑还能用吗（可移植性）
+
+**这不是理论问题**：别人装 DSH 的位置、用户名、工作区目录都和作者不同，插件必须**全部从环境推导**，不能有任何一处硬编码。
+
+**已经核对过的（2026-10-08）**：
+
+| 项 | 结论 |
+|---|---|
+| 硬编码绝对路径 | ✅ 一个都没有（命中的都是测试里的假路径、GitHub URL、注释） |
+| DSH 主目录 | ✅ `ctx.get('homePaths')` → `DSH_HOME` → `homedir()/.dsh`，三级回退 |
+| 工作区目录 | ✅ `join(home, 'dsh_wechat')`——跟着主目录走 |
+| 路径拼接 | ✅ 全部用 `join`/`resolve`；**唯一的手写斜杠是 URL**（`${cdnBaseUrl}/download?...`），那本来就该是 `/` |
+| Git 安装时跑的 `inline-core.mjs` | ✅ 用 `fileURLToPath` + `resolve`，纯相对路径 |
+| CI 覆盖 | ✅ ubuntu + windows × Node 22.19/24 四个组合都跑测试 |
+
+**发现并修掉的一处**：`isSameWorkspace` **在任何平台都把路径转小写**。
+
+- Windows / macOS 默认不区分大小写 → 转小写正确
+- **Linux 区分大小写** → `/home/me/Projects` 和 `/home/me/projects` 是**两个目录**，转小写会把陌生人的会话算成渠道自己的，并试图在错误的工作区下收养它
+
+现在按平台判断（`CASE_INSENSITIVE_PATHS`），并把大小写策略做成**可传参**，这样两种行为都能测。
+
+> **教训**：`toLowerCase()` 出现在路径比较里，就是一个跨平台 bug 的候选。**"同一个路径的两种写法"和"两个不同的路径"在 Windows 上无法区分，在 Linux 上必须区分。**
+
+**仍然没有验证的一处（诚实记录）**：
+
+DSH 会话存储的**目录编码**（`C:\Users\me\.dsh\dsh_wechat` → `--C-Users-me-.dsh-dsh_wechat--`）是在 **Windows 上对着真实目录核对出来的**。我们复刻的算法没有平台分支，纯函数测试也覆盖了 POSIX 路径（`/home/me/my_app` → `--home-me-my_app--`），但**没有在 macOS / Linux 的真实 DSH 上核对过**。
+
+**要验证它**：在一台非 Windows 机器上装好 DSH，跑起插件，然后看 `~/.dsh/sessions/` 下的目录名是否等于 `encodeWorkspaceDir(工作区路径)` 的输出。如果不等，会话列表和切换就会找不到自己的会话。
+
+### 7.7 注释与提交信息
 
 **注释讲"为什么"，不讲"是什么"。** 代码已经说了是什么。
 
 **提交信息一句话说清改了什么。** 设计讨论、走过的弯路、验证过程属于 `docs/`，不属于 `git log`——早期 16 条提交每条 30 多行、还引用了对话记录，后来整体重写成 6 条。
 
-### 7.7 我们对外声明了"跟着 DSH 更新"，就得真的跟
+### 7.8 我们对外声明了"跟着 DSH 更新"，就得真的跟
 
 README 中英两版、用户手册、以及 Hub 的提交，都写了这句话：
 

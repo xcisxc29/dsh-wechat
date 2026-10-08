@@ -47,7 +47,7 @@ name, a Git URL, a tarball, or a local path.
 dsh-wechat-plugin
 ```
 
-Add a version if you need one: `dsh-wechat-plugin@0.36.2`.
+Add a version if you need one: `dsh-wechat-plugin@0.36.3`.
 </details>
 
 <details>
@@ -204,7 +204,7 @@ pnpm install
 pnpm build              # compiles only, leaving @dsh-wechat/core imports for pack to rewrite
 pnpm run dist           # build + inline core: the loadable form a Git install needs
 pnpm typecheck
-pnpm test               # 194 tests
+pnpm test               # 195 tests
 pnpm check              # build + typecheck + test
 pnpm run pack           # run dist first
 pnpm run verify-pack    # unpack, check the manifest's files, mount it as DSH would

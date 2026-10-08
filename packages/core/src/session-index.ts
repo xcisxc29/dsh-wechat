@@ -53,18 +53,39 @@ export function encodeWorkspaceDir(cwd: string): string {
 }
 
 /**
+ * Whether this platform's filesystems ignore case in paths.
+ *
+ * Windows always does, and macOS ships case-insensitive APFS/HFS+ by default — a case-sensitive
+ * volume is possible but unusual.
+ *
+ * Linux does not, and that is the one that matters: lowercasing there would report `/home/me/Projects`
+ * and `/home/me/projects` as the same directory when they are two different ones. The plugin would
+ * then count a stranger's sessions as its own, and try to adopt under a workspace they do not belong
+ * to. Comparing case-sensitively is the correct answer wherever the filesystem is.
+ */
+export const CASE_INSENSITIVE_PATHS = process.platform === 'win32' || process.platform === 'darwin'
+
+/**
  * Whether a recorded `cwd` belongs to the given workspace.
  *
- * Compared case-insensitively and with separators normalised, because the same directory is written
- * as `C:\Users\me\x` and `C:/Users/me/x` depending on who recorded it.
+ * Separators are always normalised, because the same directory is written as `C:\Users\me\x` and
+ * `C:/Users/me/x` depending on who recorded it. Case is normalised only where the filesystem does —
+ * see {@link CASE_INSENSITIVE_PATHS}.
  *
  * @param recorded - `cwd` from the session index.
  * @param workspace - The channel's workspace directory.
+ * @param caseInsensitive - Override for the platform default, so both behaviours can be tested.
  * @returns Whether the two name the same place.
  */
-export function isSameWorkspace(recorded: string, workspace: string): boolean {
-  const normalise = (value: string): string =>
-    value.replace(/[\\/]+/g, '/').replace(/\/+$/, '').toLowerCase()
+export function isSameWorkspace(
+  recorded: string,
+  workspace: string,
+  caseInsensitive: boolean = CASE_INSENSITIVE_PATHS,
+): boolean {
+  const normalise = (value: string): string => {
+    const withSlashes = value.replace(/[\\/]+/g, '/').replace(/\/+$/, '')
+    return caseInsensitive ? withSlashes.toLowerCase() : withSlashes
+  }
   return normalise(recorded) === normalise(workspace)
 }
 
