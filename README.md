@@ -13,6 +13,12 @@ No OpenClaw, and no public IP required.
 current as the desktop app moves on. A lot of community plugins quietly stopped working when DSH
 updated; this one is maintained alongside it, and every change is released through CI.
 
+![The phone on the left, mid-conversation at 16:16, and the locked PC on the right, also at 16:16](https://raw.githubusercontent.com/xcisxc29/dsh-wechat/main/docs/images/hero.png)
+
+The screenshot above is the whole idea in one frame: the PC is **locked** at 16:16, and at 16:16 the
+phone is asking that machine for a file — WeChat shows *对方正在输入…* ("typing") in the header while
+the agent works, then a picture from the PC's desktop arrives in the chat.
+
 [中文说明](README.zh.md)
 
 ## Features
@@ -25,6 +31,17 @@ updated; this one is maintained alongside it, and every change is released throu
 - **Answer permission prompts from your phone.** Approvals and multiple-choice questions are sent to
   WeChat and answered with a number, so being away from the desk does not stall the agent.
 - **Settings page** under **Settings → WeChat**.
+
+## What it looks like
+
+|                                                                              |                                                                        |
+| :--------------------------------------------------------------------------: | :--------------------------------------------------------------------: |
+|             ![A scheduled wake-up arriving over a game](https://raw.githubusercontent.com/xcisxc29/dsh-wechat/main/docs/images/proactive-push.png)             |     ![A session in the workplace workspace pushing to WeChat](https://raw.githubusercontent.com/xcisxc29/dsh-wechat/main/docs/images/cross-session.png)     |
+| **Proactive push.** A session can message you on its own. Here a "wake me at 16:39" lands while a game is open — the agent reaches the phone, not the other way round. | **Any workspace, not just the WeChat one.** This session lives in `workplace` and still pushes to your phone. Which conversations may do that is a setting. |
+|            ![A file edited on the PC and returned, and a document sent from the phone](https://raw.githubusercontent.com/xcisxc29/dsh-wechat/main/docs/images/file-roundtrip.png)            |          ![Voice control, and the agent sending back a picture](https://raw.githubusercontent.com/xcisxc29/dsh-wechat/main/docs/images/voice-and-image.png)          |
+| **Files both ways.** Left: it edits a file on the PC and sends the result back. Right: you send it a document from the phone and ask what it says. | **Voice in, pictures out.** Speak the request instead of typing it. Ask for an image and it searches, downloads and sends one, source included. |
+|                                                                              |            ![The WeChat settings page](https://raw.githubusercontent.com/xcisxc29/dsh-wechat/main/docs/images/settings.png)            |
+|                                                                              | **Settings → WeChat.** Permission preset per conversation, proactive push, attachment merge window, reply limits, command reference, logs. |
 
 ## Install
 
@@ -47,7 +64,7 @@ name, a Git URL, a tarball, or a local path.
 dsh-wechat-plugin
 ```
 
-Add a version if you need one: `dsh-wechat-plugin@0.36.3`.
+Add a version if you need one: `dsh-wechat-plugin@0.36.4`.
 </details>
 
 <details>

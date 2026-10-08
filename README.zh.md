@@ -10,6 +10,10 @@
 
 **能在当前的 DSH 桌面端上跑** —— 针对 DSH `0.2.0-rc.2` 开发和实测，**并会随桌面端的更新持续跟进**。不少社区插件随着 DSH 升级已经悄悄不能用了；**这个是一直维护的**，每次改动都走 CI 发布。
 
+![左边是 16:16 的手机对话，右边是同一时刻锁着屏的电脑](https://raw.githubusercontent.com/xcisxc29/dsh-wechat/main/docs/images/hero.png)
+
+**上面这一张就是全部意思**：电脑在 16:16 **锁着屏**，而 16:16 那一刻手机正在向这台电脑要文件——微信顶部显示 **「对方正在输入…」** 表示 agent 正在干活，随后电脑桌面上的图片就发到了聊天里。
+
 [English](README.md)
 
 ## 功能
@@ -19,6 +23,17 @@
 - **一个微信对话，多个 DSH 会话**：`/new` `/list` `/switch` `/current` `/cancel`，或者直接说「换个对话」
 - **手机上回答权限与提问**：权限申请和多选提问会发到微信，回一个数字即可。不在电脑旁也不会被卡住
 - **设置页**：DSH 的 **设置 → 微信**
+
+## 用起来是什么样
+
+|                                                                              |                                                                        |
+| :--------------------------------------------------------------------------: | :--------------------------------------------------------------------: |
+|             ![玩游戏时收到定时叫醒](https://raw.githubusercontent.com/xcisxc29/dsh-wechat/main/docs/images/proactive-push.png)             |     ![workplace 工作区里的会话推送到微信](https://raw.githubusercontent.com/xcisxc29/dsh-wechat/main/docs/images/cross-session.png)     |
+| **主动推送**：会话可以自己找你。这里「16:39 叫我」在打游戏时到了——**是 agent 找手机，不是手机找它** | **任何工作区都能推，不只是微信那个**。这个会话在 `workplace` 里，照样能推到手机。哪些对话可以，是个设置项 |
+|            ![电脑上改好文件发回来，以及从手机发文件给它看](https://raw.githubusercontent.com/xcisxc29/dsh-wechat/main/docs/images/file-roundtrip.png)            |          ![语音控制，以及 agent 发图片回来](https://raw.githubusercontent.com/xcisxc29/dsh-wechat/main/docs/images/voice-and-image.png)          |
+| **文件双向**：左图是它在电脑上改好文件再发回来；右图是你从手机发个文档问它写了什么 | **语音进来，图片出去**：不用打字，说就行。让它找张图，它会搜、下载、发给你，还标注来源 |
+|                                                                              |            ![微信设置页](https://raw.githubusercontent.com/xcisxc29/dsh-wechat/main/docs/images/settings.png)            |
+|                                                                              | **设置 → 微信**：每个对话的权限、主动推送、附件合并窗口、回复上限、指令表、日志 |
 
 ## 安装
 
@@ -37,7 +52,7 @@
 dsh-wechat-plugin
 ```
 
-需要指定版本就带上：`dsh-wechat-plugin@0.36.3`。
+需要指定版本就带上：`dsh-wechat-plugin@0.36.4`。
 </details>
 
 <details>
