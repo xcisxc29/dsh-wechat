@@ -174,10 +174,22 @@ interface Harness {
    */
   archivedSessionIds: string[]
   created: Created[]
-  /** Messages carrying the user's own words, which is what most tests are about. */
+  /**
+   * Every prompt the channel submitted, in order.
+   *
+   * Named for the user's words because that is all a prompt carries: the standing channel note is a
+   * system-prompt section, not a message, so there is no longer a second submission to filter out.
+   * The harness used to exclude prompts that *started* with the note, which is exactly how one
+   * inbound message producing two agent turns stayed invisible to this suite.
+   */
   prompted: { sessionId: string; mode: 'queue' | 'steer'; text: string }[]
-  /** Every submission including the standing channel note, for the tests that check the split. */
-  allPrompts: { sessionId: string; mode: 'queue' | 'steer'; text: string }[]
+  /**
+   * The system-prompt section the plugin registered for the channel note.
+   *
+   * Held so a test can evaluate its provider the way DSH does at assembly time, which is the only
+   * way to see the two decisions it makes: whose session, and with what text.
+   */
+  channelNoteSection: { name: string; order: number; text: (context: unknown) => string } | undefined
   sent: Sent[]
   events: string[]
   /**
@@ -207,6 +219,18 @@ async function mount(options: {
   hostReportsNoSessions?: boolean
   modelProjection?: 'live' | 'absent' | 'throws'
   failModelSelectionFrom?: number
+  /**
+   * How the stub host exposes the system-prompt service.
+   *
+   * `inject` (the default) is what Cordis does and what the real host requires: the service is not
+   * active yet when `apply` runs, so `get` misses it. A stub that handed it back through `get`
+   * regardless is exactly what let "systemPrompt service unavailable" pass every test while the note
+   * was silently dropped on a real machine.
+   *
+   * `get` is kept because a directly-wired host is still supported, and `absent` covers a
+   * composition that does not mount the service at all.
+   */
+  systemPromptVia?: 'inject' | 'get' | 'absent'
 }): Promise<Harness> {
   return await mountWith(options)
 }
@@ -251,24 +275,32 @@ async function mountWith(options: {
 }): Promise<Harness> {
   const created: Created[] = []
   const prompted: { sessionId: string; mode: 'queue' | 'steer'; text: string }[] = []
-  /**
-   * Every submission, including the standing channel note.
-   *
-   * `prompted` holds the messages that carry the user's own words, because that is what nearly every
-   * test is about. A session's first message is split in two — the request alone, then the note as
-   * its own message — so that DSH names the session from the request; counting that split in
-   * `prompted` would turn every content assertion into a message-count assertion. The note deserves
-   * its own check rather than quiet inclusion here.
-   */
-  const allPrompts: { sessionId: string; mode: 'queue' | 'steer'; text: string }[] = []
   const sent: Sent[] = []
   const events: string[] = []
   let runtime: RuntimeShape | undefined
   let disposer: (() => void) | undefined
+  /** The channel-note section the plugin registered; see the harness field of the same name. */
+  let channelNoteSection: { name: string; order: number; text: (context: unknown) => string } | undefined
+  /** A stand-in for `@deepseek-ai/dsh-system-prompt`, which records what the plugin registers. */
+  const systemPromptRegistry = () => ({
+    section: (section: { name: string; order: number; text: (context: unknown) => string }) => {
+      channelNoteSection = section
+      return () => {
+        channelNoteSection = undefined
+      }
+    },
+  })
   /** Routes registered on the stub web server, in order. */
   const routes: { path: string; handler: (req: unknown, res: unknown) => Promise<void> }[] = []
 
   const stateFile = join(options.home, 'wechat', 'state.json')
+  /**
+   * How this mount exposes the system-prompt service; `inject` is what the real host does.
+   *
+   * See the option's own documentation: the strict shape is the default because a forgiving stub is
+   * what hid a real "service unavailable" behind a green suite.
+   */
+  const systemPromptVia = options.systemPromptVia ?? 'inject'
 
   // Seed a bound account so the pipeline has something to reply to.
   if (options.seedAccount === true) {
@@ -474,11 +506,7 @@ async function mountWith(options: {
           throw new Error('session/unavailable: the session is gone')
         }
         const text = request.content.map((part) => part.text).join('')
-        allPrompts.push({ sessionId: request.sessionId, mode: request.mode, text })
-        // The note is filtered out of `prompted`; see the field's own documentation.
-        if (!text.startsWith('[渠道：微信]')) {
-          prompted.push({ sessionId: request.sessionId, mode: request.mode, text })
-        }
+        prompted.push({ sessionId: request.sessionId, mode: request.mode, text })
         return { accepted: true as const }
       },
       // The host's own session list. Without it `listSessions()` threw inside the router, the
@@ -622,9 +650,36 @@ async function mountWith(options: {
       if (name === 'permissionPresets') {
         return { set: permissionPresetsSet }
       }
+      /*
+       * The system-prompt registry, reached the way the plugin reaches it.
+       *
+       * Deliberately *not* served from `get` on the default path: Cordis's `get` is strict and
+       * answers only for an active service, which `systemPrompt` is not while `apply` runs. A stub
+       * that served it here made the real failure invisible, so the default is the strict shape and
+       * `systemPromptVia: 'get'` is the opt-in for a directly-wired host.
+       */
+      if (name === 'systemPrompt' && systemPromptVia === 'get') {
+        return systemPromptRegistry()
+      }
       if (name === 'sessions') return { get: sessionsGet }
       return undefined
     },
+    /*
+     * Cordis's reactive form: the callback runs once the named services are active.
+     *
+     * Omitted entirely when the test stands in for a host that wires services directly — that host
+     * has no `inject`, which is the only situation the plugin's `get` fallback exists for. And it
+     * fires nothing for `absent`, a composition that mounts no system-prompt service at all.
+     */
+    ...(systemPromptVia === 'get'
+      ? {}
+      : {
+          inject(services: readonly string[], callback: (ctx: unknown) => void) {
+            if (!services.includes('systemPrompt')) return
+            if (systemPromptVia !== 'inject') return
+            callback({ systemPrompt: systemPromptRegistry() })
+          },
+        }),
     provide(name: string, value: unknown) {
       if (name === 'wechatChannel') runtime = value as RuntimeShape
     },
@@ -661,7 +716,7 @@ async function mountWith(options: {
     archivedSessionIds,
     created,
     prompted,
-    allPrompts,
+    channelNoteSection,
     sent,
     events,
     routes,
@@ -723,6 +778,7 @@ async function withHarness<T>(
     refuseSteer?: boolean
     failAllPrompts?: boolean
     hostReportsNoSessions?: boolean
+    systemPromptVia?: 'inject' | 'get' | 'absent'
   } = {},
 ): Promise<T> {
   const home = await mkdtemp(join(tmpdir(), 'dsh-wechat-test-'))
@@ -736,6 +792,7 @@ async function withHarness<T>(
     refuseSteer: options.refuseSteer,
     failAllPrompts: options.failAllPrompts,
     hostReportsNoSessions: options.hostReportsNoSessions,
+    systemPromptVia: options.systemPromptVia,
   })
   try {
     return await run(harness)
@@ -754,19 +811,6 @@ test('apply mounts, provides its service, and subscribes to the assistant stream
     assert.deepEqual(await runtime.bindings(), [])
   })
 })
-
-/**
- * The user's own words, without the standing channel note every prompt carries.
- *
- * The note **trails** every prompt, deliberately: DSH names a session from its first prompt, so
- * anything leading would become every conversation's title. Tests about message content therefore
- * compare everything before the note.
- *
- * @param prompt - The prompt as submitted.
- */
-function userPart(prompt: string): string {
-  return prompt.replace(/\n\n\[渠道：微信\][^\n]*$/, '')
-}
 
 test('a WeChat session is given full permissions, so nothing waits on a phone prompt', async () => {
   /*
@@ -824,7 +868,7 @@ test('a plain message creates one session inside the channel workspace and promp
     assert.equal(harness.created[0].cwd, undefined, 'cwd must not accompany a workspaceId')
 
     assert.equal(harness.prompted.length, 1)
-    assert.equal(userPart(harness.prompted[0].text), '帮我看看这个 bug')
+    assert.equal(harness.prompted[0].text, '帮我看看这个 bug')
     assert.equal(harness.prompted[0].sessionId, harness.created[0].sessionId)
 
     // The reply token is remembered per conversation, not per peer.
@@ -858,7 +902,7 @@ test('a second message reuses the same session with an identical cwd', async () 
     // The same Workspace on every adopt is what keeps the session attachable.
     assert.equal(harness.created[0].workspaceId, harness.created[1].workspaceId)
     assert.deepEqual(
-      harness.prompted.map((entry) => userPart(entry.text)),
+      harness.prompted.map((entry) => entry.text),
       ['one', 'two'],
     )
   })
@@ -1283,7 +1327,7 @@ test('a broken attachment is reported without losing the message text', async ()
     )
 
     assert.equal(harness.prompted.length, 1, 'the text still reaches the session')
-    assert.equal(userPart(harness.prompted[0].text), '这张图打不开')
+    assert.equal(harness.prompted[0].text, '这张图打不开')
 
     // The failure is surfaced rather than swallowed, so the settings page can show it.
     const status = await harness.runtime.status()
@@ -1612,28 +1656,136 @@ async function controlModel(
   return await modelTool(harness).execute(args, { agent: { session: { id: sessionId } } })
 }
 
-test('the channel note never precedes the request in what the namer sees', async () => {
+test('one WeChat message reaches the agent as exactly one prompt, without the note', async () => {
   /*
-   * DSH names a session from its first prompt, and that naming sees the whole prompt text. A note
-   * that led the prompt is what filled the store with 「微信渠道对话支持」 and 「微信手机对话助手」,
-   * so the ordering here is the thing being defended.
+   * The defect this replaces: the note was delivered as a prompt of its own, and a prompt is
+   * something the agent answers. Every inbound message therefore produced two user messages and two
+   * replies, the second of them a paragraph acknowledging that the user is on a phone. The session
+   * log of a real conversation showed it plainly — `user/message "你是谁？"`, an answer, then
+   * `user/message "[渠道：微信] …"`, then a second answer.
    *
-   * The channel also splits the first message — request alone, then the note — which removes the note
-   * from the naming text entirely. That split depends on asking the store whether a session already
-   * exists, and this harness writes the session at adoption time, so the split is not reachable from
-   * a test here; the ordering below holds either way, which is what makes it worth asserting.
+   * The count is the assertion that matters, so it is made on the raw submission list rather than on
+   * a filtered view: the harness used to drop note-shaped prompts before counting, which is what let
+   * this ship.
    */
   await withHarness(async (harness) => {
     await harness.runtime.ingest(inbound('帮我查一下明天的天气'))
+    await harness.runtime.ingest(inbound('那后天呢'))
 
-    const submitted = harness.allPrompts[0]?.text ?? ''
-    assert.match(submitted, /^帮我查一下明天的天气/, 'the request comes first')
-    assert.equal(
-      submitted.indexOf('[渠道：微信]') > submitted.indexOf('帮我查一下明天的天气'),
-      true,
-      'and the note comes after it',
+    assert.equal(harness.prompted.length, 2, 'one prompt per inbound message, and no second one')
+    assert.deepEqual(
+      harness.prompted.map((entry) => entry.text),
+      ['帮我查一下明天的天气', '那后天呢'],
+      'the prompt is the user words alone',
     )
+    for (const entry of harness.prompted) {
+      assert.equal(
+        entry.text.includes('[渠道：微信]'),
+        false,
+        'the note is not part of the prompt any more',
+      )
+    }
   })
+})
+
+test('the channel note is registered once, as a system-prompt section', async () => {
+  /*
+   * The note has to reach the agent on every turn of a WeChat conversation without being a message:
+   * a system section is assembled into the prompt rather than submitted as one, so it cannot draw a
+   * reply of its own and cannot become the text a session is named from.
+   */
+  await withHarness(async (harness) => {
+    const section = harness.channelNoteSection
+    assert.ok(section, 'apply() must register the channel note section')
+    assert.equal(section.name, 'wechat:channel-note')
+    assert.equal(section.order, 50, 'the plan-mode policy slot: after the persona, before tool guidance')
+  })
+})
+
+test('the note is injected for the sessions this channel drives, and for no others', async () => {
+  /*
+   * This is the whole reason the note moved out of the prompt. DSH assembles the system prompt per
+   * turn and asks each section for its text; answering for the wrong session would put "you are
+   * talking to someone on a phone" in front of a desktop conversation, and answering for none would
+   * silently restore the behaviour the note exists to prevent.
+   */
+  await withHarness(async (harness) => {
+    await harness.runtime.ingest(inbound('你好'))
+    const sessionId = harness.prompted[0]?.sessionId
+    assert.ok(sessionId, 'the message must have been routed to a session')
+    const section = harness.channelNoteSection
+    assert.ok(section, 'apply() must register the channel note section')
+
+    assert.equal(
+      section.text({ agent: { session: { id: sessionId } } }),
+      DEFAULT_SETTINGS.presenceNote.trim(),
+      'the bound session reads the note',
+    )
+    // A session-shaped `scope` is the other identity path the host uses, so it is exercised too.
+    assert.equal(
+      section.text({ scope: { id: sessionId } }),
+      DEFAULT_SETTINGS.presenceNote.trim(),
+      'and so does the scope-shaped assembly',
+    )
+    assert.equal(
+      section.text({ agent: { session: { id: 'session-not-ours' } } }),
+      '',
+      'a conversation this channel does not drive gets nothing',
+    )
+    assert.equal(section.text({}), '', 'an assembly that names no session gets nothing')
+    assert.equal(section.text(undefined), '', 'and a malformed context is not an exception')
+  })
+})
+
+test('braces in the note cannot break prompt interpolation', async () => {
+  /*
+   * The system prompt interpolates strict `{{variable}}` references and an unknown one aborts the
+   * turn. The note is edited in the settings page, so it is the one piece of prompt text a user can
+   * put braces into — and the failure would name the prompt, not the setting.
+   */
+  await withSettings(
+    async (harness) => {
+      await harness.runtime.ingest(inbound('你好'))
+      const sessionId = harness.prompted[0]?.sessionId
+      assert.ok(sessionId)
+      const section = harness.channelNoteSection
+      assert.ok(section)
+
+      const text = section.text({ agent: { session: { id: sessionId } } })
+      assert.equal(text.includes('{{'), false, 'no interpolation group survives')
+      assert.match(text, /\{ \{important\}/, 'and the braces are still readable to the model')
+    },
+    { presenceNote: '记住 {{important}} 这件事' },
+  )
+})
+
+test('a host without the system-prompt service still runs the channel', async () => {
+  /*
+   * The service is optional: a composition that does not mount it must still deliver messages. The
+   * note is then absent, which is a smaller loss than a channel that refuses to activate.
+   */
+  await withHarness(
+    async (harness) => {
+      assert.equal(harness.channelNoteSection, undefined, 'nothing to register against')
+      await harness.runtime.ingest(inbound('你好'))
+      assert.equal(harness.prompted.length, 1, 'and the message still reaches the agent')
+    },
+    { systemPromptVia: 'absent' },
+  )
+})
+
+test('a host that exposes the service through get is served too', async () => {
+  /*
+   * The other wiring: a composition that hands the service back from `get` rather than resolving it
+   * through `inject`. Reaching the registry by one path only would drop the note on such a host
+   * without a word.
+   */
+  await withHarness(
+    async (harness) => {
+      assert.ok(harness.channelNoteSection, 'the note is registered either way')
+    },
+    { systemPromptVia: 'get' },
+  )
 })
 
 test('the session tool offers every action the user can ask for', async () => {
@@ -3419,13 +3571,22 @@ test('a message that cannot be submitted is handed back, not dropped', async () 
 test('the agent is told it is on WeChat and should send things rather than point at paths', async () => {
   await withHarness(async (harness) => {
     await harness.runtime.ingest(inbound('帮我看下这个文件'))
-    // Without this the agent answers as if its user is at the desktop console, telling someone
-    // on a phone to open a local path they cannot reach.
-    assert.match(harness.prompted[0].text, /\[渠道：微信\]/)
-    assert.match(harness.prompted[0].text, /看不到这台电脑的屏幕和文件系统/)
-    // The note trails rather than leads: DSH names a session from the start of its first prompt, so
-    // a leading note named every WeChat conversation after the note instead of the question.
-    assert.match(harness.prompted[0].text, /^帮我看下这个文件/)
+    const sessionId = harness.prompted[0]?.sessionId
+    assert.ok(sessionId, 'the message must have been routed to a session')
+    /*
+     * Without this the agent answers as if its user is at the desktop console, telling someone on a
+     * phone to open a local path they cannot reach.
+     *
+     * It arrives through the system prompt rather than through the message, which is what keeps it
+     * off the phone as a second reply and out of the text the session is named from. The prompt is
+     * therefore asserted to carry the user's words *alone*.
+     */
+    const section = harness.channelNoteSection
+    assert.ok(section, 'apply() must register the channel note section')
+    const note = section.text({ agent: { session: { id: sessionId } } })
+    assert.match(note, /\[渠道：微信\]/)
+    assert.match(note, /看不到这台电脑的屏幕和文件系统/)
+    assert.equal(harness.prompted[0].text, '帮我看下这个文件', 'and the prompt is the request alone')
   })
 })
 
@@ -3623,7 +3784,7 @@ test('an unrelated message during a prompt is not swallowed as an answer', async
 
     assert.equal(settled, false, 'the prompt is still open')
     assert.equal(harness.prompted.length, promptsBefore + 1, 'the message reached the agent')
-    assert.equal(userPart(harness.prompted.at(-1)?.text ?? ''), '顺便帮我查一下天气')
+    assert.equal(harness.prompted.at(-1)?.text ?? '', '顺便帮我查一下天气')
     // And the prompt is repeated, so the user is not left wondering what was expected.
     assert.match(harness.sent.at(-1)?.text ?? '', /请回复上一条提示/)
 
@@ -4400,7 +4561,7 @@ test('a failing delivery is recorded instead of breaking the channel', async () 
       // The pipeline stays usable afterwards: a normal message still routes.
       await harness.runtime.ingest(inbound('仍然可以工作'))
       assert.equal(harness.prompted.length, 1)
-      assert.equal(userPart(harness.prompted[0].text), '仍然可以工作')
+      assert.equal(harness.prompted[0].text, '仍然可以工作')
     } finally {
       harness.dispose()
     }

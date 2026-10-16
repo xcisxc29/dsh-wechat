@@ -159,6 +159,22 @@ const LOGIN_RESULT_TTL_MS = 30_000
 const TYPING_REFRESH_MS = 5_000
 
 /**
+ * Name of the system-prompt section carrying the channel note.
+ *
+ * Stable and unique: the registry throws on a duplicate within one layer, which is how a second
+ * mount of this plugin is noticed rather than silently shadowing the first.
+ */
+const CHANNEL_NOTE_SECTION = 'wechat:channel-note'
+
+/**
+ * Where the note sits among the system sections.
+ *
+ * `50` is the slot the plan-mode policy uses: after the harness identity and the deployment persona
+ * (which own the negative orders and `0`), before tool guidance (`100`–`199`).
+ */
+const CHANNEL_NOTE_ORDER = 50
+
+/**
  * When to give up showing "typing…" regardless of the turn.
  *
  * Nothing should ever be composing for this long, and the indicator must not be able to stick: if a
@@ -646,6 +662,23 @@ class WechatRuntime {
   #sessionToolDisposer: Disposer | undefined
   /** Set once the plugin is torn down, so a late async registration does not resurrect a tool. */
   #disposed = false
+  /**
+   * Sessions this channel currently drives, by session id.
+   *
+   * The channel note is registered once, globally, as a system-prompt section whose text is decided
+   * per assembly — so the decision has to be answerable **synchronously**, from memory, at a moment
+   * when awaiting the store is not possible. This set is that answer, kept in step with the binding
+   * store by {@link #rememberBoundSessions} rather than read from disk on every assembly.
+   */
+  #channelSessions = new Set<string>()
+  /**
+   * Removal of the registered channel-note section.
+   *
+   * Set asynchronously: the registration waits for the system-prompt service through `inject`, so it
+   * lands after `apply` has returned. Held so teardown can take the section out rather than leaving a
+   * provider behind that points at a disposed runtime.
+   */
+  #channelNoteDisposer: (() => void) | undefined
 
   constructor(ctx: WechatContext, options: RuntimeOptions) {
     this.#ctx = ctx
@@ -670,11 +703,18 @@ class WechatRuntime {
      */
     this.#quota = quotaLedgerFor(this.#store)
     const bindings: BindingStore = {
-      load: async () => (await this.#store.read()).bindings,
+      load: async () => {
+        const current = (await this.#store.read()).bindings
+        // The router asks for these ahead of every prompt, which is what keeps the synchronous index
+        // the note is scoped by in step with the file.
+        this.#rememberBoundSessions(current)
+        return current
+      },
       save: async (next: Record<string, SessionBinding>) => {
         await this.#store.update((state) => {
           state.bindings = next
         })
+        this.#rememberBoundSessions(next)
       },
     }
     this.#router = new SessionRouter({
@@ -1280,6 +1320,9 @@ class WechatRuntime {
     })
 
     if (found) this.#recordBoot(`disconnected account ${accountId}`)
+    // The bindings this account owned are gone, so the sync index has to lose them too — otherwise a
+    // session that is no longer the channel's keeps being told the user is on a phone.
+    await this.syncBoundSessions()
     return found
   }
 
@@ -3055,20 +3098,139 @@ class WechatRuntime {
   }
 
   /**
-   * Whether this is the first message a session will ever receive.
+   * Replace the synchronous session index with the bindings just read or written.
    *
-   * Asked of the store rather than tracked in memory: the answer has to survive a restart, and a
-   * session the user created on the desktop and switched to is not new either.
+   * Called from the binding store this runtime hands the router, so every binding change — a
+   * conversation bound to a new session, a conversation moved to another one, a session adopted —
+   * updates the index on the way past. Cheap by construction: the set is small, and this runs once
+   * per inbound message rather than once per assembly.
    *
-   * @param sessionId - Session about to be prompted.
-   * @returns True when nothing has been recorded for it yet.
+   * @param bindings - The whole binding map, as stored.
    */
-  async #isFirstMessage(sessionId: string): Promise<boolean> {
+  #rememberBoundSessions(bindings: Record<string, SessionBinding>): void {
+    const next = new Set<string>()
+    for (const binding of Object.values(bindings)) {
+      if (binding.sessionId !== '') next.add(binding.sessionId)
+    }
+    this.#channelSessions = next
+  }
+
+  /**
+   * Fill the index from the store, for assemblies that happen before any routing does.
+   *
+   * A binding survives a restart, so on a fresh boot the index starts empty while the store still
+   * knows which sessions are the channel's. Without this, a turn driven by something other than an
+   * inbound message — a background job, a subagent reporting back — would assemble without the note.
+   */
+  async syncBoundSessions(): Promise<void> {
     try {
-      return (await storedSessionWorkspace(this.#home, sessionId)) === undefined
+      this.#rememberBoundSessions((await this.#store.read()).bindings)
     } catch {
-      // Unreadable store: assume it is not new, which keeps the note inline as it always was.
-      return false
+      // Keep whatever the index already holds: a missing note is a smaller loss than a thrown
+      // assembly, and the store is re-read on the next inbound message anyway.
+    }
+  }
+
+  /**
+   * Register the channel note as a system-prompt section.
+   *
+   * The note says things the agent cannot infer — that the person reading is on a phone, that files
+   * have to be sent rather than pointed at — so it has to be in front of the model on every turn of
+   * a WeChat conversation. This is where DSH puts standing instructions: `systemPrompt.section` is
+   * the same registry the plan-mode policy uses, its text is evaluated per assembly, and the section
+   * is registered once at host scope rather than once per session.
+   *
+   * Three properties follow, and each is the reason this is not simply appended to the prompt:
+   *
+   * - **Not a user message.** A prompt is something the agent answers, so a note delivered as one
+   *   draws a second reply to every message (the defect this replaces).
+   * - **Not in the naming text.** DSH names a session from its first prompt; a system section is not
+   *   part of that text, so titles stay the user's own words.
+   * - **Scoped by session, not by process.** The provider returns `''` unless the assembling session
+   *   is one this channel drives, so a desktop conversation never sees it.
+   *
+   * @returns The disposer that removes the section.
+   */
+  registerChannelPrompt(): Disposer {
+    /*
+     * Reached through `inject`, not `get`, and that is not a preference.
+     *
+     * Cordis's `get` is strict: it answers only for a service whose fiber is already active. During
+     * this synchronous `apply` the system-prompt service is mounted but not yet active, so `get`
+     * returned `undefined` and the note was silently dropped — observed on a real host as
+     * "systemPrompt service unavailable" on every boot, while every test passed, because a stub
+     * hands back whatever it was told to.
+     *
+     * `inject` starts a child plugin that waits for the service and runs once it is there. It is
+     * also what makes the dependency optional: a composition that never mounts it simply never
+     * calls back, where the static `inject` array would leave this whole plugin pending.
+     */
+    const inject = this.#ctx.inject
+    if (typeof inject === 'function') {
+      inject.call(this.#ctx, ['systemPrompt'], (promptCtx: unknown) => {
+        this.#registerNoteSection(systemPromptOf(promptCtx))
+      })
+    } else {
+      // A host that exposes the service directly, which is also how a stub without `inject` works.
+      this.#registerNoteSection(systemPromptOf(this.#ctx))
+    }
+    return () => {
+      this.#channelNoteDisposer?.()
+      this.#channelNoteDisposer = undefined
+    }
+  }
+
+  /**
+   * Put the note in the prompt registry, if that registry is there.
+   *
+   * @param systemPrompt - The service, or `undefined` when this composition has none.
+   */
+  #registerNoteSection(systemPrompt: PromptSectionRegistry | undefined): void {
+    if (this.#disposed) return
+    if (systemPrompt?.section === undefined) {
+      // Recorded because the symptom is otherwise invisible: replies that read as if written for a
+      // desktop, with nothing anywhere saying why.
+      this.#recordBoot('systemPrompt service unavailable: the channel note is not injected')
+      return
+    }
+    /*
+     * Warm the cache the provider reads. The provider runs during assembly, where awaiting the store
+     * would be a race against the step it is assembling for; `#settingsNow` is synchronous and this
+     * is what makes its first answer the stored one rather than the defaults.
+     */
+    this.#settingsFromDisk()
+    try {
+      const dispose = systemPrompt.section({
+        name: CHANNEL_NOTE_SECTION,
+        order: CHANNEL_NOTE_ORDER,
+        text: (context) => this.#channelNoteFor(context),
+      })
+      this.#channelNoteDisposer = typeof dispose === 'function' ? dispose : undefined
+      this.#recordBoot(`channel note section registered (order ${String(CHANNEL_NOTE_ORDER)})`)
+    } catch (error) {
+      // A duplicate name is the realistic failure — two mounts of this plugin — and a thrown section
+      // would take activation down with it.
+      this.#recordBoot(`channel note not registered: ${describeError(error)}`)
+    }
+  }
+
+  /**
+   * The note for one assembly, or `''` when this assembly is not a WeChat conversation.
+   *
+   * Never throws, and never awaits: it is called while the prompt for a turn is being assembled, so
+   * an exception here would cost the turn itself. Every failure path returns `''`, which hides the
+   * note rather than breaking the conversation.
+   *
+   * @param context - The assembly context DSH passes to a section provider.
+   * @returns The note text, or an empty string.
+   */
+  #channelNoteFor(context: unknown): string {
+    try {
+      const sessionId = sessionIdFromAssembly(context)
+      if (sessionId === undefined || !this.#channelSessions.has(sessionId)) return ''
+      return sanitizePromptText(this.#settingsNow().presenceNote.trim())
+    } catch {
+      return ''
     }
   }
 
@@ -3114,24 +3276,24 @@ class WechatRuntime {
     quoted?: string,
   ): Promise<void> {
     /*
-     * On a session's first message, the user's words go alone.
+     * One inbound message, one prompt — and the channel note is not part of it.
      *
-     * DSH names a session from its first prompt (`dsh-session-title-first-prompt-llm`), and that
-     * naming sees the whole prompt text. Putting the channel note last was not enough: sessions
-     * created after that change were still called 「微信渠道协助对话」 and 「微信渠道对话支持」,
-     * because the note is *in* the prompt however it is ordered — it is what the first message is
-     * mostly made of.
+     * The note used to ride along here, and on a session's first message it was split off and sent
+     * as a *second* prompt, because DSH names a session from its first prompt
+     * (`dsh-session-title-first-prompt-llm`) and a note inside that text became the title. The split
+     * removed the note from the naming text and put it into the conversation as a message of its own
+     * instead — which the agent answers, because a prompt is a thing it is asked to reply to. One
+     * WeChat message therefore drew two replies, the second of them a paragraph explaining that the
+     * user is on a phone.
      *
-     * So the first message carries nothing but the request, and the note follows as its own message.
-     * Everything after the first message joins in one prompt as before, since naming is no longer at
-     * stake and one message is easier for the agent to read.
+     * The note now lives in the system prompt ({@link registerChannelPrompt}), where a standing
+     * instruction belongs: present at every assembly of a session this channel drives, absent from
+     * the user's message, absent from the naming text, and never a turn of its own.
      *
      * Attachments are described in the prompt text rather than sent as native image content: that
      * path requires a vision-capable model and rejects the prompt outright otherwise, while a path
      * works with every model and every file kind.
      */
-    const settings = await this.#settings()
-    const naming = await this.#isFirstMessage(decision.sessionId)
 
     /*
      * Say so before anything else when the conversation had to be moved.
@@ -3157,28 +3319,14 @@ class WechatRuntime {
       decision.prompt,
       ...(quoted === undefined ? [] : [quoted]),
       ...attachments.map((entry) => describeMedia(entry.media, entry.path)),
-      // Held back only for the message that names the session; see below.
-      ...(naming || settings.presenceNote === '' ? [] : [settings.presenceNote]),
     ].filter((line) => line !== '')
     const prompt = lines.join('\n\n')
 
-    /*
-     * The message that names the session carries nothing but the user's words, and the note follows
-     * as its own message — sent after, so a dropped note costs the user nothing. Every later message
-     * goes in one piece, since naming is no longer at stake and one message reads better.
-     */
-    const outbound =
-      naming && settings.presenceNote !== ''
-        ? [prompt, settings.presenceNote].filter((text) => text !== '')
-        : [prompt].filter((text) => text !== '')
-
+    // A refused steer is a real outcome — the turn it targeted can end first — so the queue is
+    // tried instead of losing the message. One submission, not a loop: there is nothing to split.
     let delivered = false
-    for (const text of outbound) {
-      // A refused steer is a real outcome — the turn it targeted can end first — so the queue is
-      // tried instead of losing the message.
-      if (await this.#submit(decision.sessionId, text, 'steer')) delivered = true
-      else if (await this.#submit(decision.sessionId, text, 'queue')) delivered = true
-    }
+    if (await this.#submit(decision.sessionId, prompt, 'steer')) delivered = true
+    else if (await this.#submit(decision.sessionId, prompt, 'queue')) delivered = true
     if (delivered) return
 
     this.#recordError(`提交任务失败: 插话与排队都未成功（会话 ${decision.sessionId}）`)
@@ -4177,6 +4325,9 @@ export function apply(
         { global: true },
       )
       const detachRoutes = registerRoutes(ctx, runtime)
+      // The channel note, as a system-prompt section rather than a message. Registered inside the
+      // effect so a reload takes the old section with it instead of stacking a second one.
+      const detachChannelPrompt = runtime.registerChannelPrompt()
       // Registered inside the effect so disposal unregisters the tool rather than
       // leaving a handler that points at a torn-down runtime.
       const detachTool = runtime.registerTools()
@@ -4204,6 +4355,9 @@ export function apply(
 
       void (async () => {
         try {
+          // Before the first assembly, not after: a binding survives a restart, so a turn that
+          // arrives before any inbound message still has to know whose session it is.
+          await runtime.syncBoundSessions()
           if (config.autoStart === true || (await runtime.enabled())) await runtime.start()
           bootLog(home, 'apply: channel started')
         } catch (error) {
@@ -4217,6 +4371,7 @@ export function apply(
           if (typeof detachApproval === 'function') detachApproval()
           if (typeof detachQuestions === 'function') detachQuestions()
           detachRoutes()
+          if (typeof detachChannelPrompt === 'function') detachChannelPrompt()
           if (typeof detachTool === 'function') detachTool()
           runtime.stopTypingAll()
           void runtime.flushReplies()
@@ -4261,6 +4416,95 @@ function describeError(error: unknown): string {
   if (!(error instanceof Error)) return String(error)
   const cause = error.cause === undefined ? '' : ` <- cause: ${describeError(error.cause)}`
   return `${error.name}: ${error.message}${cause}`
+}
+
+/**
+ * The part of `@deepseek-ai/dsh-system-prompt` this plugin uses.
+ *
+ * Structural rather than imported: the host package is not a dependency of this plugin (a plugin
+ * that imported it would drag the harness into its own tree), so the one method it needs is declared
+ * here and the service is duck-typed at runtime.
+ */
+interface PromptSectionRegistry {
+  section?: (section: {
+    name: string
+    order: number
+    text: (context: unknown) => string
+  }) => (() => void) | void
+}
+
+/**
+ * The system-prompt service behind whatever the host handed over.
+ *
+ * Two shapes reach here. A context resolved by `inject` carries its services as properties, while a
+ * hand-built one — the plugin's own test doubles, and any host that wires services the older way —
+ * is asked through `get`. Both are tried rather than one being assumed.
+ *
+ * @param holder - A context or service container.
+ * @returns The registry, or `undefined` when this composition has none.
+ */
+function systemPromptOf(holder: unknown): PromptSectionRegistry | undefined {
+  if (holder === null || typeof holder !== 'object') return undefined
+  const direct = (holder as { systemPrompt?: PromptSectionRegistry }).systemPrompt
+  if (direct !== undefined) return direct
+  const get = (holder as { get?: (name: string) => unknown }).get
+  if (typeof get !== 'function') return undefined
+  return get.call(holder, 'systemPrompt') as PromptSectionRegistry | undefined
+}
+
+/**
+ * Neutralize DSH's `{{variable}}` interpolation in text the user authored.
+ *
+ * The system prompt is interpolated with **strict** references: an unknown `{{name}}` throws, and
+ * the throw aborts the turn that requested the assembly. The channel note is editable in the
+ * settings page, so without this a user who types `{{` would break every WeChat turn in the
+ * conversation — with an error that names the prompt, not the setting.
+ *
+ * Splitting the braces keeps the text readable to the model and leaves the interpolator seeing
+ * literal prose. Applied to the note only; nothing else here is user-authored prompt text.
+ *
+ * @param text - Text destined for the system prompt.
+ * @returns The same text with `{{` broken up.
+ */
+export function sanitizePromptText(text: string): string {
+  return text.replaceAll('{{', '{ {')
+}
+
+/**
+ * The session id behind one prompt-assembly context.
+ *
+ * `AssembleContext` is deliberately loose about identity: `assembleContextFor(agent)` puts the live
+ * agent on `context.agent`, while the public type promises neither `agent` nor any id shape, and a
+ * session-shaped `scope` is passed in some compositions. Every plausible path is therefore tried
+ * rather than one being assumed — and an id that cannot be found is reported as `undefined`, which
+ * hides the note. Guessing wrong in the other direction would put a phone-facing note in front of a
+ * desktop conversation.
+ *
+ * @param context - The assembly context DSH passes to a section provider.
+ * @returns The session id, or `undefined` when the context does not name one.
+ */
+export function sessionIdFromAssembly(context: unknown): string | undefined {
+  const idFrom = (value: unknown): string | undefined => {
+    if (value === null || typeof value !== 'object') return undefined
+    const candidate = value as {
+      id?: unknown
+      header?: { id?: unknown }
+      session?: { id?: unknown; header?: { id?: unknown } }
+    }
+    const ids = [
+      candidate.session?.header?.id,
+      candidate.session?.id,
+      candidate.header?.id,
+      candidate.id,
+    ]
+    for (const id of ids) {
+      if (typeof id === 'string' && id !== '') return id
+    }
+    return undefined
+  }
+  if (context === null || typeof context !== 'object') return undefined
+  const assembly = context as { agent?: unknown; scope?: unknown }
+  return idFrom(assembly.agent) ?? idFrom(assembly.scope)
 }
 
 /**

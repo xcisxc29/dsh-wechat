@@ -285,6 +285,14 @@ export interface WechatContext {
   readonly tools?: ToolsService
   effect(execute: () => void | (() => void)): void
   get(name: string): unknown
+  /**
+   * Start a child plugin that waits for these services and then runs with them resolved.
+   *
+   * The way to reach a service that may not be active yet. `get` is strict — it answers only for a
+   * service whose fiber is already active — so during this plugin's synchronous `apply` it misses
+   * everything mounted after it, `systemPrompt` among them.
+   */
+  inject?(services: readonly string[], callback: (ctx: unknown) => void): unknown
   provide(name: string, value: unknown): void
   on(
     name: 'session/created',
