@@ -3848,11 +3848,11 @@ class WechatRuntime {
        */
       listOwnSessions: async () => {
         const { own } = await splitStoredSessions(this.#home, cwd)
-        return own
+        return await dropDeadSessions(ctx, this.#home, own)
       },
       listSessions: async () => {
         const { own, others } = await splitStoredSessions(this.#home, cwd)
-        return [...own, ...others]
+        return await dropDeadSessions(ctx, this.#home, [...own, ...others])
       },
       cancel: async (sessionId: string): Promise<void> => {
         await ctx.sessionController.cancel({ sessionId })
@@ -4017,6 +4017,44 @@ class WechatRuntime {
       ...(effort === undefined ? {} : { reasoningEffort: effort }),
     }
   }
+}
+
+/**
+ * Drop sessions that can no longer be adopted: archived, or gone from disk.
+ *
+ * Why: `splitStoredSessions` only groups by workspace, so an archived session is offered in
+ * `/list` and then fails the moment it is picked — the conversation is silently rebound to a
+ * brand-new session, and nothing tells the user their choice was discarded.
+ *
+ * **A probe that throws keeps the row.** A broken probe is not evidence that a session is dead,
+ * and hiding a user's conversations because a registry hiccuped is a worse failure than showing
+ * one row that might not adopt.
+ */
+async function dropDeadSessions(
+  ctx: WechatContext,
+  home: string,
+  sessions: readonly ListedSession[],
+): Promise<ListedSession[]> {
+  const archived = ctx.workspaceRegistry?.archivedSessionIds
+  const archivedSet = Array.isArray(archived) ? new Set(archived) : undefined
+  const checked = await Promise.all(
+    sessions.map(async (session) => {
+      if (archivedSet?.has(session.sessionId) === true) return undefined
+      try {
+        const workspace = await storedSessionWorkspace(home, session.sessionId)
+        if (workspace !== undefined) return session
+        /*
+         * No recorded workspace: fall back to "is there a record at all". A session that has not
+         * finished its first turn may not have written one yet, so absence is not proof of death
+         * either — the router's missing-binding grace window covers the same race.
+         */
+        return (await hasStoredSession(home, session.sessionId)) ? session : undefined
+      } catch {
+        return session
+      }
+    }),
+  )
+  return checked.filter((session): session is ListedSession => session !== undefined)
 }
 
 /**
