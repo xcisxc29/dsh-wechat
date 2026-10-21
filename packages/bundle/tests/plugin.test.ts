@@ -4938,3 +4938,63 @@ test('a refused send does not charge the window it could not use', async () => {
   }
 })
 
+
+test('an archived session is not offered by /list', async () => {
+  /*
+   * The failure this guards: splitStoredSessions groups sessions only by workspace, so an archived
+   * session stayed in the listing. Selecting it did not fail loudly — the dead-binding guard rebound
+   * the conversation to a brand-new session instead, so the user's next message landed in a
+   * conversation with none of the history they expected.
+   *
+   * The archive set is the authority here, exactly as it is for sessionState().
+   */
+  await withHarness(async (harness) => {
+    await harness.runtime.ingest(inbound('第一条'))
+    const archived = harness.created[0]?.sessionId ?? ''
+    assert.notEqual(archived, '')
+    await harness.runtime.ingest(inbound('/new 第二个'))
+    const kept = harness.created.at(-1)?.sessionId ?? ''
+
+    // Two conversations exist; archive the first one.
+    await harness.runtime.ingest(inbound('/list'))
+    const before = (harness.sent.at(-1)?.text ?? '').split('\n').filter((line) => /^\d+\. /.test(line))
+    assert.equal(before.length, 2, `expected two rows before archiving, got: ${before.join(' | ')}`)
+
+    harness.archivedSessionIds.push(archived)
+
+    await harness.runtime.ingest(inbound('/list'))
+    const listing = harness.sent.at(-1)?.text ?? ''
+    const rows = listing.split('\n').filter((line) => /^\d+\. /.test(line))
+    assert.equal(rows.length, 1, `the archived row must be gone: ${listing}`)
+    assert.ok(
+      !rows.some((row) => row.includes(shortId(archived))),
+      `the archived session is still listed: ${listing}`,
+    )
+    assert.ok(
+      rows.some((row) => row.includes(shortId(kept))),
+      `the live session must still be listed: ${listing}`,
+    )
+  })
+})
+
+test('a probe that throws keeps the session listed, rather than hiding it', async () => {
+  /*
+   * The soft edge this guards: a registry that fails to answer is not evidence that a conversation
+   * is gone. Dropping rows on a transient error would make the user's history disappear from the one
+   * surface they can reach it from.
+   *
+   * The stub cannot easily throw per session, so this asserts the observable half: the live session
+   * survives a listing pass that consults the archive set.
+   */
+  await withHarness(async (harness) => {
+    await harness.runtime.ingest(inbound('唯一一条'))
+    const only = harness.created[0]?.sessionId ?? ''
+    assert.notEqual(only, '')
+    await harness.runtime.ingest(inbound('/list'))
+    const listing = harness.sent.at(-1)?.text ?? ''
+    const rows = listing.split('\n').filter((line) => /^\d+\. /.test(line))
+    assert.equal(rows.length, 1)
+    assert.ok(rows[0]?.includes(shortId(only)), `the live session must be kept: ${listing}`)
+  })
+})
+
