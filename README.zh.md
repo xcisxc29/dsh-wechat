@@ -8,7 +8,7 @@
 
 不需要安装 OpenClaw，也不需要公网 IP。
 
-**能在当前的 DSH 桌面端上跑** —— 针对 DSH `0.2.0-rc.2` 开发和实测，**并会随桌面端的更新持续跟进**。不少社区插件随着 DSH 升级已经悄悄不能用了；**这个是一直维护的**，每次改动都走 CI 发布。
+**能在当前的 DSH 桌面端上跑** —— 针对 DSH `0.2.1-rc.3` 开发和实测，**并会随桌面端的更新持续跟进**。不少社区插件随着 DSH 升级已经悄悄不能用了；**这个是一直维护的**，每次改动都走 CI 发布。
 
 ![左边是 16:16 的手机，正在读一条关于电脑时钟的答复；中间是同一时刻锁着屏的电脑；下面则是正在处理这轮对话的 DeepSeek Harness 窗口](https://raw.githubusercontent.com/xcisxc29/dsh-wechat/main/docs/images/hero.png)
 
@@ -37,7 +37,7 @@
 
 ## 安装
 
-**用于 DSH 桌面端** —— 需要 DSH 的工作区、工具和界面服务（也就是桌面端的标准组合），以及一台保持开机的电脑。针对 `0.2.0-rc.2` 实测，**并随桌面端更新持续跟进**。
+**用于 DSH 桌面端** —— 需要 DSH 的工作区、工具和界面服务（也就是桌面端的标准组合），以及一台保持开机的电脑。针对 `0.2.1-rc.3` 实测，**并随桌面端更新持续跟进**。
 
 侧栏点**插件**，选**添加插件**。这个输入框接受包名、Git 地址、压缩包或本地路径。
 
@@ -200,7 +200,7 @@ pnpm install
 pnpm build              # 只编译，保留 @dsh-wechat/core 引用（pack 要靠它改写）
 pnpm run dist           # build + 内嵌 core，产出可直接加载的形态
 pnpm typecheck
-pnpm test               # 324 项
+pnpm test               # 328 项
 pnpm check              # build + typecheck + test
 pnpm run pack           # 需要先 dist
 pnpm run verify-pack    # 解包、校验清单文件、按 DSH 的方式挂载一次

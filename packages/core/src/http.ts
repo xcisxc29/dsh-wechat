@@ -16,7 +16,7 @@
 
 import { randomBytes, randomUUID } from 'node:crypto'
 
-import { APP_CLIENT_VERSION, APP_ID, CHANNEL_VERSION, DEFAULT_BOT_AGENT, DEFAULT_API_TIMEOUT_MS, STALE_TOKEN_ERRCODE } from './constants.ts'
+import { APP_ID, DEFAULT_BOT_AGENT, DEFAULT_API_TIMEOUT_MS, STALE_TOKEN_ERRCODE, resolveIlinkVersion } from './constants.ts'
 import type { BaseInfo, SendMessageResp } from './types.ts'
 
 /**
@@ -158,9 +158,16 @@ export class ApiHttpError extends Error {
   }
 }
 
-/** `base_info` attached to request bodies that accept it. */
+/**
+ * `base_info` attached to request bodies that accept it.
+ *
+ * The channel version comes from {@link resolveIlinkVersion}, so a user override reaches the body
+ * and the header together; sending two different versions would be worse than sending none.
+ *
+ * @param botAgent - Self-declared identity, observability only.
+ */
 export function baseInfo(botAgent = DEFAULT_BOT_AGENT): BaseInfo {
-  return { channel_version: CHANNEL_VERSION, bot_agent: botAgent }
+  return { channel_version: resolveIlinkVersion().channelVersion, bot_agent: botAgent }
 }
 
 /**
@@ -214,7 +221,7 @@ export function buildHeaders(params: { token?: string }): Record<string, string>
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
     'iLink-App-Id': APP_ID,
-    'iLink-App-ClientVersion': APP_CLIENT_VERSION,
+    'iLink-App-ClientVersion': resolveIlinkVersion().clientVersion,
     'X-WECHAT-UIN': randomWechatUin(),
   }
   const token = params.token?.trim()

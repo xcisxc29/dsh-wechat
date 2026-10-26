@@ -3,7 +3,7 @@
  * WeChat ClawBot plugin.
  *
  * Every value here was read out of Tencent's own channel implementation,
- * `@tencent-weixin/openclaw-weixin@2.4.9` (MIT), and then confirmed live against
+ * `@tencent-weixin/openclaw-weixin@2.4.10` (MIT), and then confirmed live against
  * the service from a third-party client. Values that the server itself hands
  * back at login (`baseurl`, `redirect_host`, `longpolling_timeout_ms`) are never
  * hardcoded except as fallbacks.
@@ -18,14 +18,77 @@ export const FIXED_BASE_URL = 'https://ilinkai.weixin.qq.com'
 export const APP_ID = 'bot'
 
 /**
- * Client build number, sent as `iLink-App-ClientVersion`.
- * The official build derives it from its own package version; the server accepted
- * this literal value from an independent client.
+ * The official WeChat channel version this build declares to the iLink service.
+ *
+ * Not cosmetic: the service stamps the login QR with it, and the WeChat app refuses to bind a bot
+ * whose interface version is older than the app supports. Tencent raises that floor with its own
+ * releases, so a stale value blocks login outright instead of degrading. Taken from
+ * `@tencent-weixin/openclaw-weixin@2.4.10` (MIT, published 2026-10-11), whose `src/api/api.ts`
+ * derives both `base_info.channel_version` and `iLink-App-ClientVersion` from this one string.
  */
-export const APP_CLIENT_VERSION = '204009'
+export const CHANNEL_VERSION = '2.4.10'
 
-/** Free-form channel version reported in `base_info.channel_version`. */
-export const CHANNEL_VERSION = '2.4.9'
+/**
+ * Overrides {@link CHANNEL_VERSION} without a release.
+ *
+ * The failure this prevents is total — a QR the phone refuses cannot be bound at all — and the fix
+ * is a number Tencent publishes with every release, so waiting for our next version is the wrong
+ * trade. Set it to the current official channel version and restart DSH. A value the header cannot
+ * encode is ignored rather than guessed at: a typo must not break every request.
+ */
+export const CHANNEL_VERSION_ENV = 'DSH_WECHAT_ILINK_VERSION'
+
+/** The version pair the wire declares: `base_info.channel_version` plus the client-version header. */
+export interface IlinkVersion {
+  /** Value of `base_info.channel_version`, for example `2.4.10`. */
+  channelVersion: string
+  /** Value of `iLink-App-ClientVersion`, for example `132106`. */
+  clientVersion: string
+}
+
+/**
+ * Parse `major.minor.patch` into the bytes the header can hold.
+ *
+ * @param value - Candidate version string.
+ * @returns The three components, or `undefined` when the string is not one byte per part.
+ */
+function parseChannelVersion(value: string): [number, number, number] | undefined {
+  const match = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(value)
+  if (match === null) return undefined
+  const parts: [number, number, number] = [Number(match[1]), Number(match[2]), Number(match[3])]
+  return parts.every((part) => part <= 0xff) ? parts : undefined
+}
+
+/**
+ * Encode a channel version the way the official client does.
+ *
+ * `iLink-App-ClientVersion` is a uint32 laid out as `0x00MMNNPP`. Tencent's own implementation
+ * documents `1.0.11` → `0x0001000B` = `65547`, which is the encoding reproduced here; a literal
+ * decimal such as the old `204009` is not one it can produce.
+ *
+ * @param version - Dotted channel version.
+ * @returns The decimal string the header carries.
+ * @throws {Error} When the version cannot be encoded.
+ */
+export function clientVersionOf(version: string): string {
+  const parts = parseChannelVersion(version)
+  if (parts === undefined) throw new Error(`invalid iLink channel version: ${version}`)
+  const [major, minor, patch] = parts
+  return String(((major << 16) | (minor << 8) | patch) >>> 0)
+}
+
+/**
+ * Resolve the version pair, honouring {@link CHANNEL_VERSION_ENV}.
+ *
+ * @param env - Environment to read, injectable so the fallback is testable without touching the
+ *   process environment.
+ * @returns Channel and header versions that are guaranteed to belong together.
+ */
+export function resolveIlinkVersion(env: Record<string, string | undefined> = process.env): IlinkVersion {
+  const override = env[CHANNEL_VERSION_ENV]?.trim() ?? ''
+  const channelVersion = parseChannelVersion(override) === undefined ? CHANNEL_VERSION : override
+  return { channelVersion, clientVersion: clientVersionOf(channelVersion) }
+}
 
 /**
  * Self-declared bot identity reported in `base_info.bot_agent`.

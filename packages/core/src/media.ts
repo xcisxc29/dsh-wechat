@@ -22,7 +22,7 @@ import { basename } from 'node:path'
 import { CDN_BASE_URL, DEFAULT_API_TIMEOUT_MS } from './constants.ts'
 import { aesEcbPaddedSize, aesKeyToBase64, aesKeyToHex, decryptAesEcb, encryptAesEcb, parseAesKey } from './crypto.ts'
 import { silkToWav } from './silk.ts'
-import { apiCall, assertSendAccepted } from './http.ts'
+import { apiCall, assertSendAccepted, baseInfo } from './http.ts'
 import type {
   CDNMedia,
   GetUploadUrlResp,
@@ -139,7 +139,7 @@ export async function uploadMedia(options: UploadOptions): Promise<UploadedMedia
       // The service expects the hex form here; the message item carries the same key
       // again, also as hex, in `image_item.aeskey`.
       aeskey: aesKeyToHex(aesKey),
-      base_info: { channel_version: '2.4.9' },
+      base_info: baseInfo(),
     },
     token: account.token,
     timeoutMs: DEFAULT_API_TIMEOUT_MS,

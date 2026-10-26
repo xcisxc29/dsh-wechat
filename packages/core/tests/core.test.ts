@@ -13,6 +13,8 @@ import { join } from 'node:path'
 import { test } from 'node:test'
 
 import { parseWireJson, extractRawIds, baseInfo, buildHeaders, assertSendAccepted, SendRefusedError } from '../src/http.ts'
+import { CHANNEL_VERSION, CHANNEL_VERSION_ENV, clientVersionOf, resolveIlinkVersion } from '../src/constants.ts'
+import { fetchQRCode } from '../src/login.ts'
 import { conversationKey, extractText, toInbound, sendText } from '../src/channel.ts'
 import { DEFAULT_SETTINGS, StateStore, SESSION_LIST_HISTORY, SESSION_LIST_TITLE_LIMIT, expirePendingNotifications, findBrowse, findSessionList, forgetBrowse, latestSessionList, queuePendingNotification, rememberBrowse, rememberSessionList, type ChannelSettings } from '../src/state.ts'
 import {
@@ -102,7 +104,7 @@ test('extractRawIds surfaces identifiers for lossless logging', () => {
 test('buildHeaders mirrors the official client', () => {
   const anonymous = buildHeaders({})
   assert.equal(anonymous['iLink-App-Id'], 'bot')
-  assert.equal(anonymous['iLink-App-ClientVersion'], '204009')
+  assert.equal(anonymous['iLink-App-ClientVersion'], '132106')
   assert.equal(anonymous.Authorization, undefined)
   assert.equal(anonymous.AuthorizationType, undefined)
   assert.ok(anonymous['X-WECHAT-UIN'].length > 0)
@@ -112,10 +114,77 @@ test('buildHeaders mirrors the official client', () => {
   assert.equal(authed.AuthorizationType, 'ilink_bot_token')
 })
 
-test('baseInfo reports a stable channel version', () => {
+test('baseInfo reports the current official channel version', () => {
   const info = baseInfo('probe/1')
-  assert.equal(info.channel_version, '2.4.9')
+  assert.equal(info.channel_version, '2.4.10')
   assert.equal(info.bot_agent, 'probe/1')
+})
+
+test('the client-version header is the official bit-packed encoding', () => {
+  // Tencent's own example from `buildClientVersion`: 1.0.11 -> 0x0001000B.
+  assert.equal(clientVersionOf('1.0.11'), '65547')
+  assert.equal(clientVersionOf('2.4.10'), '132106')
+  assert.throws(() => clientVersionOf('2.4'), /invalid iLink channel version/)
+})
+
+test('a version override moves the body and the header together', () => {
+  /*
+   * The two places must never disagree: the QR is stamped from the body, the API gate reads the
+   * header, and a pair that says 2.4.11 in one and 2.4.10 in the other is the same class of bug as
+   * no version at all. This is also the escape hatch a user has when WeChat raises its floor.
+   */
+  const saved = process.env[CHANNEL_VERSION_ENV]
+  process.env[CHANNEL_VERSION_ENV] = '2.4.11'
+  try {
+    assert.equal(baseInfo('probe/1').channel_version, '2.4.11')
+    assert.equal(buildHeaders({})['iLink-App-ClientVersion'], '132107')
+    assert.equal(resolveIlinkVersion({ [CHANNEL_VERSION_ENV]: ' 2.5.1 ' }).channelVersion, '2.5.1')
+  } finally {
+    if (saved === undefined) delete process.env[CHANNEL_VERSION_ENV]
+    else process.env[CHANNEL_VERSION_ENV] = saved
+  }
+})
+
+test('an override the header cannot encode keeps the bundled version', () => {
+  assert.equal(resolveIlinkVersion({ [CHANNEL_VERSION_ENV]: 'latest' }).channelVersion, CHANNEL_VERSION)
+  assert.equal(resolveIlinkVersion({ [CHANNEL_VERSION_ENV]: '2.4.300' }).channelVersion, CHANNEL_VERSION)
+})
+
+test('the QR request declares the client version in its header, as the official client does', async () => {
+  /*
+   * The scan-time refusal ("please upgrade WeChat interface version in OpenClaw") happens inside
+   * the phone, before any confirmation, so the QR itself is what is being rejected. Tencent's own
+   * client mints that QR with only `local_token_list` in the body; the version travels in the
+   * `iLink-App-ClientVersion` header alone. That makes the header the one thing this test must
+   * pin.
+   */
+  const realFetch = globalThis.fetch
+  let seen: { url: string; body: string; headers: Record<string, string> } | undefined
+  globalThis.fetch = (async (
+    url: string,
+    init?: { body?: unknown; headers?: Record<string, string> },
+  ) => {
+    seen = {
+      url: String(url),
+      body: typeof init?.body === 'string' ? init.body : '',
+      headers: init?.headers ?? {},
+    }
+    return new Response(JSON.stringify({ qrcode: 'qr-1', qrcode_img_content: 'https://example.invalid/qr' }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    })
+  }) as typeof fetch
+
+  try {
+    const qr = await fetchQRCode({ localTokenList: ['token-1'] })
+    assert.equal(qr.qrcode, 'qr-1')
+    assert.ok(seen)
+    assert.match(seen.url, /bot_type=3/)
+    assert.deepEqual(JSON.parse(seen.body), { local_token_list: ['token-1'] })
+    assert.equal(seen.headers['iLink-App-ClientVersion'], '132106')
+  } finally {
+    globalThis.fetch = realFetch
+  }
 })
 
 // ---------------------------------------------------------------------------

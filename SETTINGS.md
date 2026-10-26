@@ -30,6 +30,27 @@
 
 一个 DSH 可以绑多个微信号。
 
+### 如果微信提示「openclaw 接口太老」
+
+手机微信在**扫码那一刻**会检查这个机器人声明的接口版本；版本比微信自己支持的旧，就直接拒绝绑定（微信里的原话是「please upgrade WeChat interface version in OpenClaw」）。插件默认声明的是**腾讯当前官方版本**（`@tencent-weixin/openclaw-weixin@2.4.10`）。
+
+腾讯把最低版本抬高之后，不用等插件发版：设一个环境变量再重启 DSH 即可。
+
+```powershell
+# Windows：把 2.4.11 换成当前官方版本号
+setx DSH_WECHAT_ILINK_VERSION 2.4.11
+```
+
+```bash
+# macOS / Linux
+export DSH_WECHAT_ILINK_VERSION=2.4.11
+```
+
+- **要重启 DSH** 才生效（环境变量在进程启动时读入）。
+- 版本号写错（不是 `主.次.修订` 或某一段超过 255）会被**忽略**，继续用插件自带的版本，不会让所有请求都失败。
+- 当前官方版本号看 npm：`npm view @tencent-weixin/openclaw-weixin version`。
+- 除了这里的扫码，**升级微信或重装插件后如果又能扫码了**，把这个变量删掉即可，插件会回到自带版本。
+
 ## 断开连接
 
 在「已绑定账号」里，每个账号旁有「断开连接」。

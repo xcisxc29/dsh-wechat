@@ -1452,7 +1452,7 @@ npm view dsh-wechat-plugin versions --registry=https://registry.npmjs.org
 pnpm build              # 只编译，保留 @dsh-wechat/core 引用（pack 要靠它改写）
 pnpm run dist           # build + 内嵌 core：Git 安装要的可直接加载形态
 pnpm typecheck          # 含 examples/
-pnpm test               # 324 项
+pnpm test               # 328 项
 pnpm run check:install  # 两条安装路径的约束
 pnpm run pack           # 需要先 build，不能先 dist
 pnpm run verify-pack    # 解包、校验清单、按 DSH 的方式挂载一次

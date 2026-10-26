@@ -9,7 +9,7 @@ work.
 
 No OpenClaw, and no public IP required.
 
-**Runs on the current DSH desktop app** — developed and tested against DSH `0.2.0-rc.2`, and kept
+**Runs on the current DSH desktop app** — developed and tested against DSH `0.2.1-rc.3`, and kept
 current as the desktop app moves on. A lot of community plugins quietly stopped working when DSH
 updated; this one is maintained alongside it, and every change is released through CI.
 
@@ -47,7 +47,7 @@ work, with both requests already answered in the session list.
 ## Install
 
 **For the DSH desktop app.** It needs DSH's workspace, tool and UI services — the standard desktop
-composition — on a machine that stays on. Tested against `0.2.0-rc.2`, and updated alongside the
+composition — on a machine that stays on. Tested against `0.2.1-rc.3`, and updated alongside the
 desktop app.
 
 Open the **plugin** entry in the sidebar and choose **添加插件** (add plugin). The field takes a package
@@ -241,7 +241,7 @@ pnpm install
 pnpm build              # compiles only, leaving @dsh-wechat/core imports for pack to rewrite
 pnpm run dist           # build + inline core: the loadable form a Git install needs
 pnpm typecheck
-pnpm test               # 324 tests
+pnpm test               # 328 tests
 pnpm check              # build + typecheck + test
 pnpm run pack           # run dist first
 pnpm run verify-pack    # unpack, check the manifest's files, mount it as DSH would

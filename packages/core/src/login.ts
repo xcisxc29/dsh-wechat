@@ -95,6 +95,13 @@ export async function fetchQRCode(params: {
   baseUrl?: string
 }): Promise<QRCodeResponse> {
   const botType = params.botType ?? DEFAULT_BOT_TYPE
+  /*
+   * No `base_info` here, on purpose: Tencent's own client sends only `local_token_list` on this
+   * endpoint, so the only version this request declares is the `iLink-App-ClientVersion` header
+   * that every call carries. The phone refuses the QR with "please upgrade WeChat interface
+   * version in OpenClaw" at scan time, before any confirmation — it is judging the QR this request
+   * minted. That makes the header, not the body, the value that has to match the official release.
+   */
   return await apiCall<QRCodeResponse>({
     baseUrl: params.baseUrl ?? FIXED_BASE_URL,
     endpoint: `ilink/bot/get_bot_qrcode?bot_type=${encodeURIComponent(botType)}`,
