@@ -184,6 +184,16 @@ interface Harness {
   sent: Sent[]
   events: string[]
   /**
+   * The gateway stub, as the plugin sees it: whether a desktop pane that can answer is attached.
+   *
+   * A test flips `live` after mounting, because the plugin reads the gateway when a prompt arrives
+   * rather than at mount time — a real page connects and disconnects throughout a session.
+   * `pendings` is the forwarded-event table a real gateway keeps, and `cancelled` records the ids
+   * the plugin asked to withdraw — how "the phone answered, so the desktop card goes" is observed
+   * without a browser.
+   */
+  gateway: { live: boolean; pendings: Map<string, unknown>; cancelled: string[] }
+  /**
    * Routes the plugin registered on the DSH web server.
    *
    * Captured rather than discarded so a test can call the real handler the settings page calls.
@@ -210,6 +220,8 @@ async function mount(options: {
   hostReportsNoSessions?: boolean
   modelProjection?: 'live' | 'absent' | 'throws'
   failModelSelectionFrom?: number
+  /** Start with a desktop pane attached, as the web client is in the app this plugin ships for. */
+  desktopPane?: boolean
 }): Promise<Harness> {
   return await mountWith(options)
 }
@@ -251,7 +263,14 @@ async function mountWith(options: {
    * written" path: making the filesystem refuse instead asserts the operating system's errno.
    */
   stateStore?: StateStore
+  /** Start with a desktop pane attached; a test may flip it later. */
+  desktopPane?: boolean
 }): Promise<Harness> {
+  const gateway = {
+    live: options.desktopPane === true,
+    pendings: new Map<string, unknown>(),
+    cancelled: [] as string[],
+  }
   const created: Created[] = []
   const prompted: { sessionId: string; mode: 'queue' | 'steer'; text: string }[] = []
   /**
@@ -626,6 +645,24 @@ async function mountWith(options: {
         return { set: permissionPresetsSet }
       }
       if (name === 'sessions') return { get: sessionsGet }
+      /*
+       * The gateway, whose `hasLiveClient()` is how the plugin decides whether the desktop copy of
+       * an approval prompt has anywhere to appear. A stub without it is a composition with no
+       * desktop pane, which is what every other test in this file mounts.
+       *
+       * `pendingRemoteEvents` and `cancelRemoteEvent` mirror the real service: the plugin uses them
+       * to withdraw a card the user already answered on the phone.
+       */
+      if (name === 'typertGateway') {
+        return {
+          hasLiveClient: () => gateway.live,
+          pendingRemoteEvents: gateway.pendings,
+          cancelRemoteEvent: (pending: { id?: string }) => {
+            gateway.cancelled.push(String(pending?.id))
+            gateway.pendings.delete(String(pending?.id))
+          },
+        }
+      }
       return undefined
     },
     provide(name: string, value: unknown) {
@@ -667,6 +704,7 @@ async function mountWith(options: {
     allPrompts,
     sent,
     events,
+    gateway,
     routes,
     dispose: () => disposer?.(),
   }
@@ -3617,6 +3655,107 @@ test('case 1: a refusal over WeChat is reported as rejected', async () => {
     await harness.runtime.ingest(inbound('拒绝'))
     // A denial must never be read as consent, and "不允许" in particular contains "允许".
     assert.equal(await outcomePromise, 'rejected')
+  })
+})
+
+test('case 1: with the desktop pane attached, the prompt is asked on both surfaces', async () => {
+  await withHarness(async (harness) => {
+    const sessionId = await bindConversation(harness)
+    harness.gateway.live = true
+    const approval = harness.listeners.get('approval/request')
+    assert.ok(approval)
+
+    let asked = 0
+    let answerDesktop: (outcome: string) => void = () => {}
+    const desktop = new Promise<string>((resolve) => {
+      answerDesktop = resolve
+    })
+    const sentBefore = harness.sent.length
+    const outcomePromise = approval(
+      { agent: { session: { id: sessionId } }, toolName: 'shell', reason: 'rm -rf build' },
+      () => {
+        asked += 1
+        return desktop
+      },
+    )
+
+    await waitFor(() => harness.sent.length > sentBefore, 'the prompt to reach the phone')
+    const prompt = harness.sent.at(-1)
+    assert.ok(prompt)
+    // The chat copy has to say the computer is asking too — otherwise the user answers twice.
+    assert.match(prompt.text, /电脑上也弹出了同一个确认/)
+    assert.equal(asked, 1, 'the desktop pane was asked at the same time as the phone')
+
+    const promptsBefore = harness.prompted.length
+    answerDesktop('rejected')
+    assert.equal(await outcomePromise, 'rejected')
+
+    // The phone's copy is withdrawn and says so; the late "允许" is an ordinary message, not an
+    // answer to a prompt that was already decided on the computer.
+    await waitFor(
+      () => (harness.sent.at(-1)?.text ?? '').includes('已在电脑上拒绝'),
+      'the phone to be told the desktop decided',
+    )
+    await harness.runtime.ingest(inbound('允许'))
+    await waitFor(
+      () => harness.prompted.length === promptsBefore + 1,
+      'the late reply to reach the agent instead of the withdrawn prompt',
+    )
+  })
+})
+
+test('case 1: a desktop pane that abstains leaves the phone as the answering surface', async () => {
+  await withHarness(async (harness) => {
+    const sessionId = await bindConversation(harness)
+    harness.gateway.live = true
+    const approval = harness.listeners.get('approval/request')
+    assert.ok(approval)
+
+    const sentBefore = harness.sent.length
+    // `unavailable` is what the harness resolves with when the page has the prompt but nobody
+    // answers it — an abstention the phone half must outlast.
+    const outcomePromise = approval(
+      { agent: { session: { id: sessionId } }, toolName: 'shell' },
+      () => Promise.resolve('unavailable'),
+    )
+    await waitFor(() => harness.sent.length > sentBefore, 'the prompt to reach the phone')
+    await harness.runtime.ingest(inbound('允许'))
+    assert.equal(await outcomePromise, 'allowed-once')
+  })
+})
+
+test('case 1: answering on the phone withdraws the desktop copy of the prompt', async () => {
+  await withHarness(async (harness) => {
+    const sessionId = await bindConversation(harness)
+    harness.gateway.live = true
+    const approval = harness.listeners.get('approval/request')
+    assert.ok(approval)
+
+    /*
+     * The gateway's table, exactly as the forwarder fills it: one forwarded approval event, keyed by
+     * event id, carrying the projected request — whose `callId` is the only field that ties it to
+     * one tool call.
+     */
+    harness.gateway.pendings.set('event-1', {
+      id: 'event-1',
+      frame: { event: 'approval/request', request: { toolName: 'shell', callId: 'call-1' } },
+    })
+    const sentBefore = harness.sent.length
+    const outcomePromise = approval(
+      { agent: { session: { id: sessionId } }, toolName: 'shell', callId: 'call-1' },
+      // The desktop half never answers: the user decides on the phone.
+      () => new Promise<never>(() => {}),
+    )
+    await waitFor(() => harness.sent.length > sentBefore, 'the prompt to reach the phone')
+    await harness.runtime.ingest(inbound('允许'))
+    assert.equal(await outcomePromise, 'allowed-once')
+
+    // The card must not be left standing as a decision that was already made.
+    assert.deepEqual(harness.gateway.cancelled, ['event-1'])
+    await waitFor(
+      () => (harness.sent.at(-1)?.text ?? '').includes('电脑上也弹出了同一个确认'),
+      'the prompt said both surfaces were asking',
+    )
   })
 })
 
