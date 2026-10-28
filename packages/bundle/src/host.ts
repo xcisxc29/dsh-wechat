@@ -1916,20 +1916,185 @@ class WechatRuntime {
   }
 
   /**
+   * Whether a desktop conversation pane is attached and able to answer a prompt.
+   *
+   * The desktop half of the approval waterfall lives in the web client: the harness forwards the
+   * request over the gateway and waits for that page to answer. Delegating with no page attached
+   * would park the request in the gateway until its signal aborts, so this is read before the
+   * desktop half is asked at all. Reached through `get` rather than `inject`: the gateway is not
+   * one of this plugin's declared services, and a composition without it keeps the phone-only
+   * behaviour instead of failing to mount.
+   *
+   * @returns Whether a client that can answer is attached.
+   */
+  #desktopPaneAttached(): boolean {
+    try {
+      const gateway = this.#ctx.get('typertGateway') as
+        | { hasLiveClient?: () => boolean }
+        | undefined
+      if (gateway === undefined || typeof gateway.hasLiveClient !== 'function') return false
+      return gateway.hasLiveClient() === true
+    } catch {
+      return false
+    }
+  }
+
+  /**
+   * Ask one permission prompt on both surfaces and take the first answer.
+   *
+   * The plugin still claims first — that is what keeps a phone-only user from stalling on a panel
+   * nobody is looking at — but it no longer answers alone: the rest of the waterfall (the desktop
+   * pane) is asked at the same time, so the user decides wherever they are. Whichever answers
+   * first wins; the losing side is told to stop waiting.
+   *
+   * @param conversationId - Conversation the prompt belongs to.
+   * @param target - Account and peer of that conversation.
+   * @param record - The harness's approval request.
+   * @param next - The rest of the waterfall, which owns the desktop pane.
+   * @returns The first decision, or `unavailable` when neither surface answered.
+   */
+  async #askBothSurfaces(
+    conversationId: string,
+    target: { account: WeixinAccount; peerId: string },
+    record: {
+      toolName?: unknown
+      callId?: unknown
+      displayReason?: unknown
+      reason?: unknown
+      command?: unknown
+      signal?: AbortSignal
+    },
+    next: () => Promise<ApprovalOutcome | 'unavailable'>,
+  ): Promise<ApprovalOutcome | 'unavailable'> {
+    // One controller for this prompt's phone side: aborting it clears the pending interaction, so
+    // a later "允许" is not swallowed as an answer to a prompt decided elsewhere.
+    const phone = new AbortController()
+    const onRequestAbort = (): void => {
+      phone.abort()
+    }
+    record.signal?.addEventListener('abort', onRequestAbort, { once: true })
+
+    let answer: ApprovalOutcome | undefined
+    let decidedOn: 'phone' | 'desktop' | undefined
+    try {
+      const fromPhone = this.#ask(
+        conversationId,
+        target.account,
+        target.peerId,
+        presentApproval(record, { alsoOnDesktop: true }).body,
+        'approval',
+        parseApprovalReply,
+        phone.signal,
+      )
+        .then((outcome) => ({ surface: 'phone' as const, outcome }))
+        // A send that failed is not an answer: the desktop half decides on its own.
+        .catch(() => ({ surface: 'phone' as const, outcome: undefined }))
+      const fromDesktop = Promise.resolve()
+        .then(next)
+        // `unavailable` is the harness's default when nobody answers, i.e. an abstention here —
+        // not a decision — so the phone half keeps waiting rather than reporting it as one.
+        .then((outcome) => ({
+          surface: 'desktop' as const,
+          outcome: outcome === 'unavailable' ? undefined : outcome,
+        }))
+        .catch(() => ({ surface: 'desktop' as const, outcome: undefined }))
+
+      let settled = await Promise.race([fromPhone, fromDesktop])
+      if (settled.outcome === undefined) {
+        // One surface abstained before the other spoke; the request is still open, so wait for
+        // the side that has not spoken yet.
+        settled = await (settled.surface === 'phone' ? fromDesktop : fromPhone)
+      }
+      answer = settled.outcome
+      decidedOn = answer === undefined ? undefined : settled.surface
+      if (decidedOn === 'desktop' && answer !== undefined) {
+        // Stop waiting on the phone, and say so: the prompt in the chat must not look open, or the
+        // user answers a decision that was already made.
+        phone.abort()
+        void this.#reply(
+          target.account,
+          conversationId,
+          target.peerId,
+          `已在电脑上${answer === 'rejected' ? '拒绝' : '允许'}，上一条确认不用回了。`,
+        )
+      }
+      if (decidedOn === 'phone') {
+        // The desktop copy is still on screen and still answerable; take it back so it does not sit
+        // there as a decision that was already made.
+        const callId = typeof record.callId === 'string' ? record.callId : undefined
+        if (callId !== undefined) this.#dismissDesktopPrompt(callId)
+      }
+      this.#recordBoot(
+        `approval decided: ${
+          answer === undefined ? 'unavailable (both surfaces abstained)' : `${answer} on ${decidedOn}`
+        }`,
+      )
+    } finally {
+      record.signal?.removeEventListener('abort', onRequestAbort)
+    }
+    return answer ?? 'unavailable'
+  }
+
+  /**
+   * Withdraw the desktop copy of an approval that was decided on the phone.
+   *
+   * The core client's card lives under a forwarded gateway event, and the gateway keeps every
+   * outstanding event in `pendingRemoteEvents` with a `cancelRemoteEvent()` that pushes a `cancel`
+   * frame — the client aborts that delivery and unmounts the card. None of that is a published API,
+   * so it is reached defensively and a missing or renamed field merely leaves the card to expire
+   * with the request, which is what happened before this existed.
+   *
+   * The pending event is identified by the tool call's id, which is unique per call: matching on the
+   * tool name alone could withdraw a different session's prompt for the same tool.
+   *
+   * @param callId - Correlated tool call the approval belongs to.
+   */
+  #dismissDesktopPrompt(callId: string): void {
+    try {
+      const gateway = this.#ctx.get('typertGateway') as
+        | {
+            pendingRemoteEvents?: Map<
+              string,
+              { id?: string; frame?: { event?: unknown; request?: Record<string, unknown> } }
+            >
+            cancelRemoteEvent?: (pending: unknown, reason: Error) => void
+          }
+        | undefined
+      const pendings = gateway?.pendingRemoteEvents
+      const cancel = gateway?.cancelRemoteEvent
+      if (pendings === undefined || typeof pendings.values !== 'function') return
+      if (typeof cancel !== 'function') return
+      for (const pending of pendings.values()) {
+        const frame = pending?.frame
+        if (frame?.event !== 'approval/request') continue
+        if (frame.request?.callId !== callId) continue
+        cancel.call(gateway, pending, new Error('approval was answered on WeChat'))
+        this.#recordBoot(`desktop prompt withdrawn (answered on phone): call=${callId}`)
+        return
+      }
+    } catch (error) {
+      this.#recordBoot(`desktop prompt withdraw failed: ${describeError(error)}`)
+    }
+  }
+
+  /**
    * Claim permission prompts for conversations bound to WeChat.
    *
-   * Unbound conversations delegate, so the desktop pane answers as before.
+   * Unbound conversations delegate, so the desktop pane answers as before. When the desktop pane
+   * is attached, its copy of the prompt is asked alongside the chat message so both surfaces show
+   * the confirmation and either one settles it.
    *
    * @returns The listener for `ctx.on('approval/request', ...)`.
    */
   approvalListener(): (
     request: unknown,
-    next: () => Promise<ApprovalOutcome>,
-  ) => Promise<ApprovalOutcome> {
+    next: () => Promise<ApprovalOutcome | 'unavailable'>,
+  ) => Promise<ApprovalOutcome | 'unavailable'> {
     return async (request, next) => {
       const record = (request ?? {}) as {
         agent?: unknown
         toolName?: unknown
+        callId?: unknown
         displayReason?: unknown
         reason?: unknown
         command?: unknown
@@ -1937,16 +2102,24 @@ class WechatRuntime {
       }
       const sessionId = sessionIdOf(record.agent)
       const conversationId = await this.#conversationForAgentSession(sessionId)
+      const dual = conversationId !== undefined && this.#desktopPaneAttached()
       // Recorded either way. An answerer that is never invoked and one that abstains look
       // identical from the phone — both leave the prompt on the desktop — so the decision is
       // written where the next diagnosis can find it.
       this.#recordBoot(
         `approval seen: tool=${String(record.toolName)} session=${sessionId ?? '(none)'} ` +
-          `${conversationId === undefined ? 'not-a-wechat-session -> delegate' : 'claiming'}`,
+          `${
+            conversationId === undefined
+              ? 'not-a-wechat-session -> delegate'
+              : dual
+                ? 'claiming (phone + desktop)'
+                : 'claiming (phone only)'
+          }`,
       )
       if (conversationId === undefined) return await next()
       const target = await this.#askTarget(conversationId)
       if (target === undefined) return await next()
+      if (dual) return await this.#askBothSurfaces(conversationId, target, record, next)
 
       const answer = await this.#ask(
         conversationId,
@@ -4218,8 +4391,18 @@ export function apply(
           detachRoutes()
           if (typeof detachTool === 'function') detachTool()
           runtime.stopTypingAll()
-          void runtime.flushReplies()
-          void runtime.halt()
+          /*
+           * Both are fire-and-forget teardown work, and both can reject — a state write that fails
+           * (a locked or read-only state file, a full disk) rejects out of the store. An unhandled
+           * rejection is fatal to the host process in Node, so a failure here used to take the whole
+           * desktop app down during an unload; it must be recorded and swallowed instead.
+           */
+          void runtime.flushReplies().catch((error: unknown) => {
+            bootLog(home, `apply: teardown flush failed: ${describeError(error)}`)
+          })
+          void runtime.halt().catch((error: unknown) => {
+            bootLog(home, `apply: teardown halt failed: ${describeError(error)}`)
+          })
         } catch (error) {
           bootLog(home, `apply: teardown failed: ${describeError(error)}`)
         }

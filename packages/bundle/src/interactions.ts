@@ -87,15 +87,23 @@ export function parseApprovalReply(reply: string): ApprovalOutcome | undefined {
 /**
  * Render a permission prompt for the chat.
  *
+ * With `alsoOnDesktop` the same confirmation is showing in the desktop conversation pane, so the
+ * chat copy has to say so: a user who decides on the computer must not reply here afterwards, and
+ * a user who sees both needs to know either answer counts.
+ *
  * @param request - The harness's approval request.
+ * @param options - Presentation options; `alsoOnDesktop` mentions the desktop dialog.
  * @returns The message body.
  */
-export function presentApproval(request: {
-  toolName?: unknown
-  displayReason?: unknown
-  reason?: unknown
-  command?: unknown
-}): Presentation {
+export function presentApproval(
+  request: {
+    toolName?: unknown
+    displayReason?: unknown
+    reason?: unknown
+    command?: unknown
+  },
+  options: { alsoOnDesktop?: boolean } = {},
+): Presentation {
   const toolName = typeof request.toolName === 'string' ? request.toolName : '某个操作'
   const reason = [request.displayReason, request.reason, request.command].find(
     (value) => typeof value === 'string' && value !== '',
@@ -103,6 +111,9 @@ export function presentApproval(request: {
   const lines = [`🔐 需要你确认：${toolName}`]
   if (typeof reason === 'string') lines.push(reason, '')
   else lines.push('')
+  if (options.alsoOnDesktop === true) {
+    lines.push('电脑上也弹出了同一个确认，哪边先答都算数。', '')
+  }
   lines.push('回复 允许 或 拒绝')
   return { body: lines.join('\n') }
 }
