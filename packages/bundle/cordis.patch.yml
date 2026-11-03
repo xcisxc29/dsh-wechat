@@ -11,8 +11,8 @@
 # written. A Host row whose id differs from its package name is the one deviation
 # this file used to carry.
 #
-# `autoStart` reconnects stored bot accounts on boot. Leave it false and turn the
-# channel on from Settings; the choice is persisted in the channel's own state file.
+# `autoStart` is the initial reconnect default. A choice saved in Settings takes
+# precedence, so switching the channel off stays effective after a restart.
 
 - insert:
     - id: dsh-wechat-plugin

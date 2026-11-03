@@ -585,13 +585,16 @@ export class StateStore {
     return new StateStore(join(dshHome, 'wechat', 'state.json'))
   }
 
-  /** Read the current state, tolerating a missing or corrupt file. */
+  /** Read the current state; only a missing file starts empty. */
   async read(): Promise<ChannelState> {
     // Share one in-flight load between concurrent callers. Without this, a second
     // `read()` that starts before the first finishes would fall back to an empty
     // state and cache it, silently discarding everything already on disk — which is
     // how a concurrent update could wipe accounts that had been seeded or adopted.
-    this.#loading ??= this.#load()
+    this.#loading ??= this.#load().catch((error) => {
+      this.#loading = undefined
+      throw error
+    })
     return await this.#loading
   }
 
@@ -599,11 +602,19 @@ export class StateStore {
   async #load(): Promise<ChannelState> {
     if (this.#cache !== undefined) return this.#cache
     try {
-      const parsed = JSON.parse(await readFile(this.file, 'utf-8')) as Partial<ChannelState>
+      const parsed: unknown = JSON.parse(await readFile(this.file, 'utf-8'))
+      if (!isRecord(parsed)) {
+        throw new Error(`微信状态文件格式无效：${this.file}。请修复原文件后重试。`)
+      }
       this.#cache = normalize(parsed)
-    } catch {
-      // A missing file is the normal first run; a corrupt one must not be fatal,
-      // because the user can always log in again.
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException)?.code !== 'ENOENT') {
+        if (error instanceof SyntaxError) {
+          // JSON.parse errors can include credential text from the file.
+          throw new Error(`无法解析微信状态文件：${this.file}。原文件已保留，请修复后重试。`)
+        }
+        throw error
+      }
       this.#cache = structuredClone(EMPTY_STATE)
     }
     return this.#cache
@@ -618,8 +629,9 @@ export class StateStore {
     const state = await this.read()
     mutate(state)
     // Chain writes so two concurrent updates cannot interleave their renames.
-    this.#writeChain = this.#writeChain.then(() => this.#persist(state))
-    await this.#writeChain
+    const write = this.#writeChain.then(() => this.#persist(state))
+    this.#writeChain = write.catch(() => {})
+    await write
   }
 
   /** Drop every artifact for one account. Used when a token goes stale. */

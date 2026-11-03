@@ -262,7 +262,13 @@ export async function runCli(
     return finish(EXIT_USAGE)
   }
 
-  const where = await resolved.target()
+  let where: Awaited<ReturnType<CliProvider['target']>>
+  try {
+    where = await resolved.target()
+  } catch {
+    fail('读不到微信状态文件：' + resolved.stateFile + '；文件可能损坏或被占用。')
+    return finish(EXIT_FAILED)
+  }
   if (!where.ok) {
     fail(`${where.message}（状态文件：${resolved.stateFile}）`)
     return finish(EXIT_USAGE)

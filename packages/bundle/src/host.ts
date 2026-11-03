@@ -510,6 +510,8 @@ interface RuntimeOptions {
   workspace: string
   /** Identity reported to the service. */
   botAgent: string
+  /** Whether the channel starts when no choice has been saved. */
+  defaultEnabled?: boolean
   /**
    * Outbound delivery. Defaults to the real iLink sender; tests substitute a
    * recorder so the whole pipeline can run without touching the network.
@@ -546,6 +548,7 @@ class WechatRuntime {
   readonly #botAgent: string
   readonly #workspace: string
   readonly #home: string
+  readonly #defaultEnabled: boolean
   readonly #send: SendFunction
   /** One monitor per account, plus its abort controller. */
   readonly #monitors = new Map<string, { monitor: ChannelMonitor; abort: AbortController }>()
@@ -638,6 +641,7 @@ class WechatRuntime {
     this.#botAgent = options.botAgent
     this.#workspace = options.workspace
     this.#home = options.home
+    this.#defaultEnabled = options.defaultEnabled === true
     this.#send =
       options.send ??
       (async ({ account, to, text, contextToken }) =>
@@ -690,14 +694,14 @@ class WechatRuntime {
 
   /** Whether the channel is armed to reconnect on boot. */
   async enabled(): Promise<boolean> {
-    return (await this.#store.read()).autoStart === true
+    return (await this.#store.read()).autoStart ?? this.#defaultEnabled
   }
 
   /** Current status for the settings page. */
   async status(): Promise<ChannelStatus> {
     const state = await this.#store.read()
     return {
-      enabled: state.autoStart === true,
+      enabled: state.autoStart ?? this.#defaultEnabled,
       accounts: Object.values(state.accounts).map((account) => ({
         accountId: account.accountId,
         ...(account.userId === undefined ? {} : { userId: account.userId }),
@@ -2045,9 +2049,14 @@ class WechatRuntime {
    */
   async #conversationForAgentSession(sessionId: string | undefined): Promise<string | undefined> {
     if (sessionId === undefined) return undefined
-    const state = await this.#store.read()
-    const found = Object.values(state.bindings).find((entry) => entry.sessionId === sessionId)
-    return found?.conversationId
+    try {
+      const state = await this.#store.read()
+      const found = Object.values(state.bindings).find((entry) => entry.sessionId === sessionId)
+      return found?.conversationId
+    } catch (error) {
+      this.#recordError('会话绑定读取失败: ' + (error instanceof Error ? error.message : String(error)))
+      return undefined
+    }
   }
 
   /**
@@ -3566,43 +3575,49 @@ class WechatRuntime {
       }, settleMs)
       entry.timer.unref?.()
       this.#replies.set(sessionId, entry)
-    })()
+    })().catch((error) => {
+      this.#recordError('回复缓冲读取失败: ' + (error instanceof Error ? error.message : String(error)))
+    })
   }
 
   /** Send and clear the buffered reply for a session. */
   async #flushReply(sessionId: string): Promise<void> {
-    const entry = this.#replies.get(sessionId)
-    if (entry === undefined) return
-    this.#replies.delete(sessionId)
-    const text = entry.text.trim()
-    if (text === '') return
+    try {
+      const entry = this.#replies.get(sessionId)
+      if (entry === undefined) return
+      this.#replies.delete(sessionId)
+      const text = entry.text.trim()
+      if (text === '') return
 
-    const state = await this.#store.read()
-    const binding = state.bindings[entry.conversationId]
-    if (binding === undefined) {
-      /*
-       * The answer is thrown away, and this is the only record of it.
-       *
-       * It reaches here when the conversation lost its binding between the turn starting and the
-       * answer arriving — a disconnect, or the account being forgotten. The reply is already the
-       * finished work of a whole turn, so silence here is the most expensive kind: the user asked,
-       * the model answered, and nothing anywhere says where the answer went.
-       */
-      this.#recordError(
-        `reply dropped: conversation ${entry.conversationId} has no binding ` +
-          `(session=${sessionId} text=${String(text.length)} chars)`,
-      )
-      return
+      const state = await this.#store.read()
+      const binding = state.bindings[entry.conversationId]
+      if (binding === undefined) {
+        /*
+         * The answer is thrown away, and this is the only record of it.
+         *
+         * It reaches here when the conversation lost its binding between the turn starting and the
+         * answer arriving — a disconnect, or the account being forgotten. The reply is already the
+         * finished work of a whole turn, so silence here is the most expensive kind: the user asked,
+         * the model answered, and nothing anywhere says where the answer went.
+         */
+        this.#recordError(
+          `reply dropped: conversation ${entry.conversationId} has no binding ` +
+            `(session=${sessionId} text=${String(text.length)} chars)`,
+        )
+        return
+      }
+      const account = state.accounts[binding.accountId]
+      if (account === undefined) {
+        this.#recordError(
+          `reply dropped: account ${binding.accountId} is no longer stored ` +
+            `(conversation=${entry.conversationId} session=${sessionId} text=${String(text.length)} chars)`,
+        )
+        return
+      }
+      await this.#reply(account, binding.conversationId, binding.peerId, text)
+    } catch (error) {
+      this.#recordError('回复缓冲读取失败: ' + (error instanceof Error ? error.message : String(error)))
     }
-    const account = state.accounts[binding.accountId]
-    if (account === undefined) {
-      this.#recordError(
-        `reply dropped: account ${binding.accountId} is no longer stored ` +
-          `(conversation=${entry.conversationId} session=${sessionId} text=${String(text.length)} chars)`,
-      )
-      return
-    }
-    await this.#reply(account, binding.conversationId, binding.peerId, text)
   }
 
   /** Flush everything still buffered. Used on shutdown. */
@@ -4129,7 +4144,7 @@ function resolvePaths(
 
 /** Plugin configuration from the loader patch. */
 export interface WechatConfig {
-  /** Reconnect stored accounts on boot. */
+  /** Initial reconnect default, used only when no choice has been saved. */
   autoStart?: boolean
   /** Override the state file path. */
   stateFile?: string
@@ -4161,6 +4176,7 @@ export function apply(
       stateFile: paths.stateFile,
       workspace: paths.workspace,
       botAgent: config.botAgent ?? 'dsh-wechat-plugin/0.0.0',
+      defaultEnabled: config.autoStart === true,
       ...(internals.send === undefined ? {} : { send: internals.send }),
       ...(internals.stateStore === undefined ? {} : { stateStore: internals.stateStore }),
     })
@@ -4203,8 +4219,10 @@ export function apply(
 
       void (async () => {
         try {
-          if (config.autoStart === true || (await runtime.enabled())) await runtime.start()
-          bootLog(home, 'apply: channel started')
+          // A saved off switch must survive a restart, even when the bundle defaults to on.
+          const enabled = await runtime.enabled()
+          if (enabled) await runtime.start()
+          bootLog(home, enabled ? 'apply: channel started' : 'apply: channel disabled')
         } catch (error) {
           bootLog(home, `apply: start failed: ${describeError(error)}`)
         }

@@ -20,6 +20,7 @@ import { join } from 'node:path'
 import { test } from 'node:test'
 
 import { apply, recordClientFailure, type SendFunction } from '../src/host.ts'
+import { defaultCliProvider, EXIT_FAILED, runCli } from '../src/cli.ts'
 import { ROUTE_SETTINGS } from '../src/routes.ts'
 import type { WechatContext } from '../src/services.ts'
 import {
@@ -4937,4 +4938,81 @@ test('a refused send does not charge the window it could not use', async () => {
     await removeHome(home)
   }
 })
+
+
+test('unreadable state is handled by stream, approval and CLI', async (t) => {
+  const home = await mkdtemp(join(tmpdir(), 'dsh-wechat-test-'))
+  await mkdir(join(home, 'wechat'), { recursive: true })
+  const file = join(home, 'wechat', 'state.json')
+  await writeFile(file, '{')
+  const unhandled: unknown[] = []
+  const errors: string[] = []
+  t.mock.method(console, 'error', (...parts: unknown[]) => { errors.push(parts.map(String).join(' ')) })
+  const onUnhandled = (reason: unknown) => { unhandled.push(reason) }
+  process.on('unhandledRejection', onUnhandled)
+  const harness = await mountWith({ home, seedAccount: false })
+  try {
+    harness.listeners.get('agent/assistant-stream')!({
+      agent: { session: { id: 'unreadable-session' } },
+      frame: { type: 'chunk', chunk: { type: 'text-delta', text: '测试回复' } },
+    })
+    const outcome = await harness.listeners.get('approval/request')!(
+      { agent: { session: { id: 'unreadable-session' } }, toolName: 'read' },
+      async () => 'delegated',
+    )
+    assert.equal(outcome, 'delegated')
+    const cli = await runCli(['测试'], { out: () => {}, err: () => {} }, defaultCliProvider(file))
+    assert.equal(cli.code, EXIT_FAILED)
+    assert.match(cli.err.join('\n'), /读不到微信状态文件/)
+    await waitFor(() => errors.some((line) => line.includes('回复缓冲读取失败')), 'the stream failure to be recorded')
+    assert.match(errors.join('\n'), /会话绑定读取失败/)
+    await new Promise<void>((resolve) => setImmediate(resolve))
+    assert.deepEqual(unhandled, [])
+  } finally {
+    harness.dispose()
+    process.off('unhandledRejection', onUnhandled)
+    await removeHome(home)
+  }
+})
+
+for (const trigger of ['settle timer', 'shutdown']) {
+  test(`unreadable state is handled by reply flush: ${trigger}`, async (t) => {
+    const home = await mkdtemp(join(tmpdir(), 'dsh-wechat-test-'))
+    const file = join(home, 'wechat', 'state.json')
+    const store = new StateStore(file)
+    const unhandled: unknown[] = []
+    const errors: string[] = []
+    t.mock.method(console, 'error', (...parts: unknown[]) => { errors.push(parts.map(String).join(' ')) })
+    const onUnhandled = (reason: unknown) => { unhandled.push(reason) }
+    process.on('unhandledRejection', onUnhandled)
+    const harness = await mountWith({ home, seedAccount: true, stateStore: store })
+    const runtime = harness.runtime as RuntimeShape & { flushReplies(): Promise<void> }
+    try {
+      await runtime.ingest(inbound('建立绑定'))
+      harness.listeners.get('agent/assistant-stream')!({
+        agent: { session: { id: harness.prompted[0].sessionId } },
+        frame: { type: 'chunk', chunk: { type: 'text-delta', text: '待排空的回复' } },
+      })
+      await new Promise<void>((resolve) => setImmediate(resolve))
+      await writeFile(file, '{')
+      // Force the next read to disk: the live store normally keeps this state cached.
+      const read = t.mock.method(store, 'read', () => new StateStore(file).read())
+      if (trigger === 'shutdown') await assert.doesNotReject(runtime.flushReplies())
+      await waitFor(() => errors.some((line) => line.includes('回复缓冲读取失败')), 'the flush failure to be recorded')
+      const reads = read.mock.callCount()
+      assert.equal(reads, 1)
+      await runtime.flushReplies()
+      assert.equal(read.mock.callCount(), reads, 'the failed reply was drained, not retried')
+      read.mock.restore()
+      assert.ok((await runtime.status()).errors.some((line) => line.includes('回复缓冲读取失败')))
+      await new Promise<void>((resolve) => setImmediate(resolve))
+      assert.deepEqual(unhandled, [])
+      assert.equal(await readFile(file, 'utf8'), '{', 'the corrupt state was not replaced')
+    } finally {
+      harness.dispose()
+      process.off('unhandledRejection', onUnhandled)
+      await removeHome(home)
+    }
+  })
+}
 
