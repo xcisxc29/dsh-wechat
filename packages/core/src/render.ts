@@ -27,13 +27,39 @@ interface QRCodeRenderer {
 /** Cached module handle, so the import cost is paid once. */
 let rendererPromise: Promise<QRCodeRenderer> | undefined
 
+/**
+ * Pick the object that can actually render, out of whatever `import()` handed back.
+ *
+ * `qrcode` is CommonJS, so the host's module interop decides where its exports land:
+ * on the namespace `default`, or on the namespace itself. Both shapes are legitimate,
+ * and at least one host produces a third: DSH 0.2.2-rc.5 returns a namespace whose
+ * `default` is an empty object while the real exports sit on the namespace. Trusting
+ * `default ?? namespace` therefore picked the empty object, `loadRenderer` threw, and
+ * because `toDataUrl` swallows that failure by design the only symptom was a login
+ * page with no QR image and an empty log — silent, and invisible to every test here.
+ *
+ * Probing for the function we are about to call costs nothing and covers all three
+ * shapes. Exported so the regression test can replay the shape without a real host.
+ *
+ * @param loaded - The value returned by `import('qrcode')`, untyped.
+ * @returns The usable renderer, or `undefined` when neither shape carries one.
+ */
+export function pickRenderer(loaded: unknown): QRCodeRenderer | undefined {
+  const shapes: unknown[] = [(loaded as { default?: unknown } | undefined)?.default, loaded]
+  for (const shape of shapes) {
+    if (typeof (shape as Partial<QRCodeRenderer> | undefined)?.toDataURL === 'function') {
+      return shape as QRCodeRenderer
+    }
+  }
+  return undefined
+}
+
 /** Resolve the renderer, or throw with a message that names the missing package. */
 async function loadRenderer(): Promise<QRCodeRenderer> {
   rendererPromise ??= (async () => {
     try {
-      const loaded = (await import('qrcode')) as unknown as { default?: QRCodeRenderer } & QRCodeRenderer
-      const candidate = loaded.default ?? loaded
-      if (typeof candidate?.toDataURL !== 'function') {
+      const candidate = pickRenderer(await import('qrcode'))
+      if (!candidate) {
         throw new Error('qrcode 模块没有 toDataURL 导出')
       }
       return candidate
